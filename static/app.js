@@ -432,6 +432,11 @@ function setPhase(phase) {
   $("answer-text").disabled = !answering;
   $("submit-button").disabled = !answering;
   $("replay-button").disabled = !answering || state.replayUsed;
+  // 질문을 읽는 동안에는 말하는 면접위원에게 표시를 띄운다.
+  for (const who of ["A", "B"]) {
+    const speaking = phase === "asking" && tts.available && state.question && who === state.question.interviewer;
+    $(`badge-${who}`).classList.toggle("speaking", Boolean(speaking));
+  }
   const waiting = state.mode === "voice" ? "답변을 받아 적고 다음 질문을 준비하는 중입니다." : "다음 질문을 준비하는 중입니다.";
   let note = "";
   if (phase === "processing") note = `${waiting} 이 시간은 면접 시간에서 빠집니다.`;
