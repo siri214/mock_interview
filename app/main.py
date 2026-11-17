@@ -1,6 +1,7 @@
 import logging
 import tempfile
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -141,6 +142,7 @@ def _ask(session: store.Session) -> store.Turn:
         remaining_sec=remaining,
         answer_limit_sec=session.answer_limit_sec,
         is_last=is_last,
+        covered=session.covered,
     )
     return session.add_question(question)
 
@@ -163,6 +165,7 @@ def create_session(body: SessionCreate) -> dict:
     session = store.new_session(
         school.key, school.total_limit_sec, body.answer_limit_sec, record.text
     )
+    session.covered = store.covered_evidence()
     turn = _ask(session)
     store.save_session(session)
     return {
@@ -221,6 +224,76 @@ def create_report(session_id: str) -> dict:
         )
         store.save_session(session)
     return {"report": session.report}
+
+
+@app.get("/api/sessions")
+def list_sessions() -> dict:
+    """끝낸 연습 목록. 최근 것부터."""
+    items = []
+    for session in reversed(store.finished_sessions()):
+        report = session.report
+        items.append(
+            {
+                "id": session.id,
+                "school": session.school,
+                "created_at": session.created_at,
+                "questions": len(session.turns),
+                "elapsed_sec": session.elapsed_sec,
+                "overall": store.overall_score(report),
+                "scores": [
+                    {"competency": s["competency"], "score_5": s["score_5"]}
+                    for s in (report or {}).get("scores", [])
+                ],
+            }
+        )
+    return {"sessions": items}
+
+
+@app.post("/api/sessions/{session_id}/turns/{index}/retry")
+def retry_answer(
+    session_id: str,
+    index: int,
+    answer_sec: float = Form(..., ge=0),
+    text: str = Form(""),
+    audio: UploadFile | None = File(None),
+) -> dict:
+    """리포트를 본 뒤 같은 질문에 다시 답하고 그 답변만 평가받는다."""
+    session = store.load_session(session_id)
+    if not session.done:
+        raise HTTPException(409, "면접이 아직 끝나지 않았습니다.")
+    turn = next((t for t in session.turns if t.index == index), None)
+    if turn is None:
+        raise HTTPException(404, "질문을 찾을 수 없습니다.")
+    if audio is not None:
+        text = _transcribe_upload(audio)
+    answer = text.strip() or store.NO_ANSWER
+
+    # 직전 시도와 비교한다. 처음 다시 답하는 것이면 면접 때의 답변과 리포트 피드백이 기준이다.
+    if turn.retries:
+        last = turn.retries[-1]
+        previous = (last["answer"], last["answer_sec"], last["feedback"])
+    else:
+        original = next(
+            (q for q in (session.report or {}).get("per_question", []) if q["index"] == index),
+            None,
+        )
+        previous = (turn.answer or store.NO_ANSWER, turn.answer_sec or 0, original)
+
+    feedback = interviewer.retry_feedback(
+        get_school(session.school),
+        session.record_text,
+        asdict(turn),
+        previous[0],
+        previous[1],
+        previous[2],
+        answer,
+        answer_sec,
+        session.answer_limit_sec,
+    )
+    attempt = {"answer": answer, "answer_sec": answer_sec, "feedback": feedback}
+    turn.retries.append(attempt)
+    store.save_session(session)
+    return {"attempt": attempt, "attempts": len(turn.retries)}
 
 
 @app.get("/api/sessions/{session_id}")

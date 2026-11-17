@@ -170,6 +170,7 @@ def next_question(
     remaining_sec: int,
     answer_limit_sec: int,
     is_last: bool = False,
+    covered: list[str] | None = None,
 ) -> dict:
     """다음 질문 {type, competency, evidence, text, interviewer}를 만든다."""
     response = _create(
@@ -184,7 +185,7 @@ def next_question(
             {
                 "role": "user",
                 "content": prompts.question_request(
-                    turns, remaining_sec, answer_limit_sec, followup_count(turns), is_last
+                    turns, remaining_sec, answer_limit_sec, followup_count(turns), is_last, covered
                 ),
             }
         ],
@@ -258,3 +259,39 @@ def generate_report(
     except json.JSONDecodeError:
         raise LLMError("모델 응답을 해석하지 못했습니다. 다시 시도하세요.")
     return _normalize_report(school, raw, turns)
+
+
+def retry_feedback(
+    school: School,
+    record_text: str,
+    turn: dict,
+    previous_answer: str,
+    previous_sec: float,
+    previous_feedback: dict | None,
+    new_answer: str,
+    new_sec: float,
+    answer_limit_sec: int,
+) -> dict:
+    """같은 질문에 다시 한 답변의 피드백 {progress, good, improve, direction, mismatch}."""
+    response = _create(
+        purpose="retry_feedback",
+        max_tokens=8000,
+        system=_system(school, record_text),
+        output_config={
+            "effort": REPORT_EFFORT,
+            "format": {"type": "json_schema", "schema": prompts.RETRY_SCHEMA},
+        },
+        messages=[
+            {
+                "role": "user",
+                "content": prompts.retry_request(
+                    turn, previous_answer, previous_sec, previous_feedback,
+                    new_answer, new_sec, answer_limit_sec,
+                ),
+            }
+        ],
+    )
+    try:
+        return json.loads(_text(response))
+    except json.JSONDecodeError:
+        raise LLMError("모델 응답을 해석하지 못했습니다. 다시 시도하세요.")

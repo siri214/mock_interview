@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app import config, interviewer, session as store, stt
 from app.main import app
-from app.schools import MAX_QUESTIONS
+from app.schools import MAX_QUESTIONS, get_school
 
 FIXTURE = Path(__file__).parent / "fixtures" / "records" / "sample_record.txt"
 EVIDENCE = "60도에서 가장 균일한 막이 생겼다고 보고서에 정리하고"
@@ -30,9 +30,15 @@ def client(tmp_path, monkeypatch, calls):
     monkeypatch.setenv("MASK_NAME", "김하늘")
     monkeypatch.setenv("MASK_SCHOOL", "한빛고등학교")
 
-    def fake_next_question(school, record_text, turns, remaining_sec, answer_limit_sec, is_last):
+    def fake_next_question(school, record_text, turns, remaining_sec, answer_limit_sec, is_last, covered):
         calls.append(
-            {"record_text": record_text, "turns": turns, "remaining_sec": remaining_sec, "is_last": is_last}
+            {
+                "record_text": record_text,
+                "turns": turns,
+                "remaining_sec": remaining_sec,
+                "is_last": is_last,
+                "covered": covered,
+            }
         )
         # 두 번째 질문만 꼬리질문으로 돌려준다.
         qtype = "followup" if len(turns) == 1 else "new"
@@ -334,3 +340,73 @@ def test_question_without_evidence_counts_as_verified():
         {"interviewer": "A", "type": "new", "competency": "c", "evidence": "", "text": "지원 동기"}
     )
     assert turn.evidence_verified is True
+
+
+def test_history_lists_finished_sessions_with_overall_score(client):
+    assert client.get("/api/sessions").json() == {"sessions": []}
+    start(client)  # 끝내지 않은 세션은 목록에 나오지 않는다
+    sid = finish(client, "ajou")
+    listed = client.get("/api/sessions").json()["sessions"]
+    assert [s["id"] for s in listed] == [sid]
+    assert listed[0]["overall"] is None and listed[0]["questions"] == 1
+
+    client.post(f"/api/sessions/{sid}/report")
+    item = client.get("/api/sessions").json()["sessions"][0]
+    scores = {s["competency"]: s["score_5"] for s in item["scores"]}
+    expected = sum(scores[c.name] * c.weight for c in get_school("ajou").competencies) / 100
+    assert item["overall"] == pytest.approx(expected, abs=0.01)
+
+
+def test_next_session_avoids_evidence_from_finished_sessions(client, calls):
+    finish(client, "ajou")
+    assert calls[0]["covered"] == []
+    start(client, school="inha")
+    assert calls[-1]["covered"] == [EVIDENCE]
+
+
+def test_covered_evidence_dedupes_and_ignores_empty(client):
+    for _ in range(2):
+        finish(client, "ajou")
+    assert store.covered_evidence() == [EVIDENCE]
+
+
+def test_old_session_files_without_new_fields_still_load(client):
+    sid = finish(client, "ajou")
+    path = config.SESSIONS_DIR / f"{sid}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["covered"]
+    for turn in data["turns"]:
+        del turn["retries"]
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    loaded = store.load_session(sid)
+    assert loaded.covered == [] and loaded.turns[0].retries == []
+
+
+def test_retry_compares_with_report_feedback_then_with_last_attempt(client, monkeypatch):
+    seen = []
+
+    def fake_retry(school, record_text, turn, prev_answer, prev_sec, prev_feedback, answer, sec, limit):
+        seen.append({"prev_answer": prev_answer, "prev_feedback": prev_feedback, "answer": answer})
+        return {"progress": "p", "good": "g", "improve": "i", "direction": "d", "mismatch": None}
+
+    monkeypatch.setattr(interviewer, "retry_feedback", fake_retry)
+    sid = finish(client, "ajou")
+    client.post(f"/api/sessions/{sid}/report")
+
+    url = f"/api/sessions/{sid}/turns/1/retry"
+    first = client.post(url, data={"text": "두 번째 답변", "answer_sec": 40}).json()
+    second = client.post(url, data={"text": "세 번째 답변", "answer_sec": 45}).json()
+    assert first["attempts"] == 1 and second["attempts"] == 2
+    assert seen[0]["prev_answer"] == "답변" and seen[0]["prev_feedback"]["good"] == "g"
+    assert seen[1]["prev_answer"] == "두 번째 답변"
+
+    turn = client.get(f"/api/sessions/{sid}").json()["turns"][0]
+    assert [r["answer"] for r in turn["retries"]] == ["두 번째 답변", "세 번째 답변"]
+    assert turn["answer"] == "답변"  # 면접 때의 답변은 그대로 둔다
+
+
+def test_retry_rejects_unfinished_session_and_unknown_question(client):
+    sid = start(client)["session_id"]
+    assert client.post(f"/api/sessions/{sid}/turns/1/retry", data={"answer_sec": 1}).status_code == 409
+    done = finish(client, "ajou")
+    assert client.post(f"/api/sessions/{done}/turns/9/retry", data={"answer_sec": 1}).status_code == 404

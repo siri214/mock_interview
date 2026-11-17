@@ -104,6 +104,11 @@
       <p id="setup-error" class="notice error" role="alert" hidden></p>
       <button id="start-button" class="primary big" type="button">면접 시작</button>
       <p class="muted small center">시작하면 전체 타이머가 흐르고 중간에 멈출 수 없습니다.</p>
+
+      <section id="history" class="history" hidden>
+        <h2 class="section-title">연습 기록</h2>
+        <ul id="history-list" class="history-list"></ul>
+      </section>
     </div>
   </main>
 
@@ -180,7 +185,7 @@
   <!-- 리포트 화면 -->
   <main id="screen-done" class="screen" hidden>
     <div class="hero">
-      <h1>수고하셨습니다</h1>
+      <h1 id="done-title">수고하셨습니다</h1>
       <p id="done-summary" class="sub"></p>
     </div>
     <p id="done-error" class="notice error" role="alert" hidden></p>
@@ -226,7 +231,7 @@
 
     <h2 class="section-title">질문별 기록</h2>
     <section id="review" class="review"></section>
-    <button id="restart-button" class="primary big" type="button">같은 생기부로 다시 연습</button>
+    <button id="restart-button" class="primary big" type="button">준비 화면으로 돌아가 다시 연습</button>
   </main>
 
   <script src="app.js"></script>

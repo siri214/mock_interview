@@ -101,9 +101,22 @@ def question_request(
     answer_limit_sec: int,
     followup_count: int,
     is_last: bool = False,
+    covered: list[str] | None = None,
 ) -> str:
+    covered_block = ""
+    if covered:
+        items = "\n".join(f"- {c}" for c in covered)
+        covered_block = (
+            "<지난 연습에서 이미 물어본 기록>\n"
+            f"{items}\n"
+            "</지난 연습에서 이미 물어본 기록>\n"
+            "지원자가 같은 생기부로 여러 번 연습하고 있습니다. 생기부 전체를 고르게 준비할 수 있도록, "
+            "이번에는 위 목록에 없는 기록에서 질문하세요. 꼬리질문은 이 제한과 무관하게 직전 답변을 "
+            "따라갑니다. 남은 기록이 마땅치 않을 때만 위 기록을 다른 각도에서 다시 묻습니다.\n\n"
+        )
     if not turns:
         return (
+            f"{covered_block}"
             f"면접을 시작합니다. 답변 제한 시간은 질문당 {answer_limit_sec}초입니다. "
             "첫 질문(지원 동기)을 만들어 주세요."
         )
@@ -119,7 +132,7 @@ def question_request(
         "\n시간상 이번이 마지막 질문입니다. 마무리 질문을 하세요." if is_last else ""
     )
     return f"""\
-<문답 기록>
+{covered_block}<문답 기록>
 {transcript}
 </문답 기록>
 
@@ -248,3 +261,70 @@ def report_schema(school: School) -> dict:
         "required": ["overall", "scores", "per_question", "delivery", "next_practice"],
         "additionalProperties": False,
     }
+
+
+def _feedback_text(feedback: dict) -> str:
+    lines = [
+        f"잘한 점: {feedback['good']}",
+        f"보완할 점: {feedback['improve']}",
+        f"다시 답한다면: {feedback['direction']}",
+    ]
+    if feedback.get("mismatch"):
+        lines.append(f"기록과 어긋난 부분: {feedback['mismatch']}")
+    return "\n".join(lines)
+
+
+def retry_request(
+    turn: dict,
+    previous_answer: str,
+    previous_sec: float,
+    previous_feedback: dict | None,
+    new_answer: str,
+    new_sec: float,
+    answer_limit_sec: int,
+) -> str:
+    feedback_block = ""
+    if previous_feedback:
+        feedback_block = (
+            f"<이전 답변에 준 피드백>\n{_feedback_text(previous_feedback)}\n</이전 답변에 준 피드백>\n\n"
+        )
+    return f"""\
+<질문>
+{turn['text']}
+근거 기록: {turn['evidence'] or '(특정 기록 없음)'}
+평가요소: {turn['competency']}
+</질문>
+
+<이전 답변 소요={round(previous_sec)}초>
+{previous_answer or '(무응답)'}
+</이전 답변>
+
+{feedback_block}<다시 한 답변 소요={round(new_sec)}초>
+{new_answer or '(무응답)'}
+</다시 한 답변>
+
+모의면접이 끝난 뒤, 지원자가 피드백을 읽고 같은 질문에 다시 답했습니다. 평가자로서 다시 한 \
+답변을 평가해 주세요. 지원자는 이 평가를 보고 한 번 더 고쳐 말할지 정합니다.
+
+- progress: 이전 답변과 비교해 나아진 점과 그대로인 점을 한두 문장으로 씁니다. 나아지지 \
+않았다면 그렇게 씁니다.
+- good: 다시 한 답변에서 실제로 잘한 점. 없으면 없다고 씁니다.
+- improve: 아직 아쉬운 점.
+- direction: 한 번 더 답한다면 넣을 내용의 방향. 모범 답안 문장은 써 주지 않고 뼈대만 제시합니다.
+- mismatch: 다시 한 답변이 생기부 기록과 어긋난 부분. 없으면 null.
+- 답변은 음성 인식으로 받아 적은 것일 수 있으니 받아쓰기 오류로 보이는 단어는 감점하지 않습니다.
+- 답변 제한은 {answer_limit_sec}초였습니다."""
+
+
+RETRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "progress": {"type": "string"},
+        "good": {"type": "string"},
+        "improve": {"type": "string"},
+        "direction": {"type": "string"},
+        "mismatch": {"type": ["string", "null"]},
+    },
+    "required": ["progress", "good", "improve", "direction", "mismatch"],
+    "additionalProperties": False,
+}

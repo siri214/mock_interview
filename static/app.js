@@ -333,6 +333,7 @@ async function loadSetup() {
   if (!setup.record.ok) problems.push(setup.record.error);
   showError("setup-error", problems.join(" "));
   $("start-button").disabled = problems.length > 0;
+  loadHistory();
 }
 
 function selectSchool(key) {
@@ -604,12 +605,20 @@ async function sendPending() {
 
 // ---------- 종료·리포트 화면 ----------
 
-async function finishInterview() {
+function finishInterview() {
   clearInterval(state.tickId);
   closeMic();
   speak(CLOSING_REMARK, "A");
+  showResults(state.sessionId, "수고하셨습니다");
+}
+
+// 방금 끝낸 면접과 지난 연습 기록이 같은 화면을 쓴다.
+async function showResults(sessionId, title) {
+  cancelRetry();
+  state.sessionId = sessionId;
   state.phase = "done";
   state.review = null;
+  $("done-title").textContent = title;
   showScreen("done");
   $("review").replaceChildren();
   $("report").hidden = true;
@@ -621,8 +630,14 @@ async function finishInterview() {
     renderReview(state.review, null);
   } catch (err) {
     showError("done-error", err.message);
+    return;
   }
-  requestReport();
+  if (state.review.report) {
+    renderReport(state.review.report);
+    renderReview(state.review, state.review.report);
+  } else {
+    requestReport();
+  }
 }
 
 async function requestReport() {
@@ -641,7 +656,10 @@ async function requestReport() {
     status.hidden = true;
   }
   renderReport(report);
-  if (state.review) renderReview(state.review, report);
+  if (state.review) {
+    state.review.report = report;
+    renderReview(state.review, report);
+  }
 }
 
 function renderReport(report) {
@@ -724,7 +742,190 @@ function renderReview(session, report) {
       }
       const feedback = feedbackByIndex.get(turn.index);
       if (feedback) card.append(feedbackRows(feedback));
+      const attempts = el("div", { class: "attempts" });
+      attempts.append(...turn.retries.map((attempt, i) => attemptView(attempt, i + 1)));
+      card.append(attempts);
+      // 다시 답하기는 피드백을 읽은 뒤에 의미가 있으므로 리포트가 온 뒤에만 보여준다.
+      if (report) {
+        const button = el("button", { type: "button", class: "retry-start", text: "이 질문 다시 답하기" });
+        button.addEventListener("click", () => startRetry(turn, card, attempts, button));
+        card.append(button);
+      }
       return card;
+    }),
+  );
+}
+
+// ---------- 같은 질문 다시 답하기 ----------
+
+const retry = { active: null };
+
+function attemptView(attempt, number) {
+  return el(
+    "section",
+    { class: "attempt" },
+    el(
+      "div",
+      { class: "review-meta" },
+      el("span", { class: "badge active", text: `다시 답하기 ${number}` }),
+      el("span", { class: "muted small", text: `답변 ${duration(attempt.answer_sec)}` }),
+    ),
+    el("p", { class: "review-answer", text: attempt.answer }),
+    el("p", { class: "progress-note" }, el("strong", { text: "이전 답변과 비교 " }), attempt.feedback.progress),
+    feedbackRows(attempt.feedback),
+  );
+}
+
+function cancelRetry() {
+  const active = retry.active;
+  if (!active) return;
+  clearInterval(active.timerId);
+  if (active.stream) active.stream.getTracks().forEach((track) => track.stop());
+  active.box.remove();
+  active.button.hidden = false;
+  retry.active = null;
+}
+
+async function startRetry(turn, card, attempts, button) {
+  cancelRetry();
+  stopSpeaking();
+  const limitMs = state.review.answer_limit_sec * 1000;
+  const timer = el("span", { class: "clock answer-clock", text: clock(limitMs) });
+  const status = el("span", { class: "muted small", role: "status" });
+  const finish = el("button", { type: "button", class: "primary", text: "답변 끝내기" });
+  const cancel = el("button", { type: "button", text: "취소" });
+  const input = el("div", {});
+  const box = el(
+    "div",
+    { class: "retry-box" },
+    el("div", { class: "answer-head" }, el("span", { class: "answer-title", text: "다시 답하기" }), timer),
+    input,
+    el("div", { class: "actions" }, status, el("span", { class: "action-buttons" }, cancel, finish)),
+  );
+  button.hidden = true;
+  card.append(box);
+  const active = { box, button, stream: null, recorder: null, timerId: null, form: null };
+  retry.active = active;
+  cancel.addEventListener("click", cancelRetry);
+
+  // 준비 화면에서 고른 답변 방식을 따른다. 마이크를 못 쓰면 글로 받는다.
+  let textarea = null;
+  if (state.mode === "voice") {
+    try {
+      active.stream = await openMic();
+    } catch (err) {
+      status.textContent = `${err.message} 글로 답변합니다.`;
+    }
+    if (retry.active !== active) {
+      if (active.stream) active.stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+  }
+  if (active.stream) {
+    input.append(
+      el("div", { class: "rec-line" }, el("span", { class: "rec-dot on" }), el("span", { text: "녹음 중" })),
+    );
+    active.recorder = startRecording(active.stream);
+  } else {
+    textarea = el("textarea", { rows: "5", "aria-label": "다시 한 답변", placeholder: "피드백을 반영해 다시 답해 보세요." });
+    input.append(textarea);
+    textarea.focus();
+  }
+
+  const startedAt = performance.now();
+  let sending = false;
+  const send = async () => {
+    status.textContent = "답변을 평가하는 중입니다…";
+    finish.disabled = true;
+    try {
+      const res = await api(`/api/sessions/${state.sessionId}/turns/${turn.index}/retry`, {
+        method: "POST",
+        body: active.form,
+      });
+      turn.retries.push(res.attempt);
+      attempts.append(attemptView(res.attempt, res.attempts));
+      cancelRetry();
+    } catch (err) {
+      // 같은 답변을 다시 보낼 수 있게 남겨 둔다.
+      status.textContent = err.message;
+      finish.textContent = "다시 보내기";
+      finish.disabled = false;
+    }
+  };
+  const submit = async () => {
+    if (sending) return send();
+    sending = true;
+    clearInterval(active.timerId);
+    const form = new FormData();
+    form.set("answer_sec", ((performance.now() - startedAt) / 1000).toFixed(1));
+    if (active.recorder) {
+      form.set("audio", await stopRecording(active.recorder), "answer.webm");
+      active.stream.getTracks().forEach((track) => track.stop());
+      active.stream = null;
+      input.replaceChildren();
+    } else {
+      form.set("text", textarea.value);
+      textarea.disabled = true;
+    }
+    active.form = form;
+    send();
+  };
+  finish.addEventListener("click", submit);
+  active.timerId = setInterval(() => {
+    const left = limitMs - (performance.now() - startedAt);
+    timer.textContent = clock(left);
+    timer.classList.toggle("low", left <= 10000);
+    if (left <= 0) submit();
+  }, 200);
+}
+
+// ---------- 연습 기록 ----------
+
+async function loadHistory() {
+  let sessions;
+  try {
+    ({ sessions } = await api("/api/sessions"));
+  } catch {
+    return; // 기록을 못 불러와도 면접은 볼 수 있다
+  }
+  $("history").hidden = sessions.length === 0;
+  const names = new Map((state.setup ? state.setup.schools : []).map((s) => [s.key, s.university]));
+  $("history-list").replaceChildren(
+    ...sessions.map((item, i) => {
+      // 같은 학교의 바로 앞 연습과 종합 점수를 비교한다.
+      const earlier = sessions.slice(i + 1).find((s) => s.school === item.school && s.overall !== null);
+      let change = "";
+      if (item.overall !== null && earlier) {
+        const diff = item.overall - earlier.overall;
+        change = Math.abs(diff) < 0.05 ? "지난번과 같음" : `지난번보다 ${diff > 0 ? "+" : "−"}${Math.abs(diff).toFixed(1)}`;
+      }
+      const when = new Date(item.created_at).toLocaleString("ko-KR", {
+        month: "long", day: "numeric", hour: "2-digit", minute: "2-digit",
+      });
+      const school = names.get(item.school) || item.school;
+      const button = el(
+        "button",
+        { type: "button", class: "history-item" },
+        el(
+          "span",
+          { class: "history-main" },
+          el("span", { class: "history-title", text: `${school} · ${when}` }),
+          el("span", {
+            class: "muted small",
+            text:
+              `질문 ${item.questions}개 · ${duration(item.elapsed_sec)}` +
+              (item.scores.length ? ` · ${item.scores.map((s) => `${s.competency} ${s.score_5.toFixed(1)}`).join(", ")}` : ""),
+          }),
+        ),
+        el(
+          "span",
+          { class: "history-score" },
+          el("strong", { text: item.overall === null ? "리포트 없음" : `${item.overall.toFixed(1)} / 5` }),
+          el("span", { class: "muted small", text: change }),
+        ),
+      );
+      button.addEventListener("click", () => showResults(item.id, `${school} 연습 기록`));
+      return el("li", {}, button);
     }),
   );
 }
@@ -742,8 +943,10 @@ $("tts-test-button").addEventListener("click", runTtsTest);
 $("replay-button").addEventListener("click", replayQuestion);
 $("restart-button").addEventListener("click", () => {
   stopSpeaking();
+  cancelRetry();
   state.phase = "setup";
   showScreen("setup");
+  loadHistory();
 });
 $("answer-text").addEventListener("keydown", (event) => {
   // 한글 조합 중의 Enter는 글자 확정이므로 제출하지 않는다.

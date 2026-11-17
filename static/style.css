@@ -1209,6 +1209,89 @@ label.option-row {
   color: var(--error);
 }
 
+/* ---------- 다시 답하기 ---------- */
+
+.retry-start {
+  margin-top: 1rem;
+}
+
+.retry-box {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  border: 1.5px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.retry-box textarea {
+  background: var(--surface);
+}
+
+.attempt {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 45%, var(--surface));
+}
+
+.attempt .review-answer {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  margin: 0.6rem 0;
+}
+
+.attempt .feedback {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+}
+
+.progress-note {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+/* ---------- 연습 기록 ---------- */
+
+.history {
+  margin-top: 2.5rem;
+}
+
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.history-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  text-align: left;
+  padding: 0.9rem 1.1rem;
+  border-radius: 12px;
+}
+
+.history-main,
+.history-score {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.history-title {
+  font-weight: 700;
+}
+
+.history-score {
+  justify-items: end;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .speaking-bars i,
   .rec-dot.on {

@@ -119,6 +119,8 @@ class Turn:
     text: str
     answer: str | None = None
     answer_sec: float | None = None
+    # 리포트를 본 뒤 같은 질문에 다시 답한 기록: {answer, answer_sec, feedback}
+    retries: list[dict] = field(default_factory=list)
 
     def to_question(self) -> dict:
         """면접 중에 지원자에게 보여줄 부분."""
@@ -137,6 +139,8 @@ class Session:
     elapsed_sec: float = 0
     done: bool = False
     report: dict | None = None
+    # 이전 연습에서 이미 물어본 생기부 기록. 세션을 만들 때 한 번 정한다.
+    covered: list[str] = field(default_factory=list)
 
     @property
     def last_turn(self) -> Turn | None:
@@ -193,10 +197,46 @@ def save_session(session: Session) -> None:
     tmp.replace(path)
 
 
+def _read_session(path: Path) -> Session:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["turns"] = [Turn(**t) for t in data["turns"]]
+    return Session(**data)
+
+
 def load_session(session_id: str) -> Session:
     path = _session_path(session_id)
     if not path.is_file():
         raise SessionNotFound(session_id)
-    data = json.loads(path.read_text(encoding="utf-8"))
-    data["turns"] = [Turn(**t) for t in data["turns"]]
-    return Session(**data)
+    return _read_session(path)
+
+
+def finished_sessions() -> list[Session]:
+    """끝까지 마친 세션을 오래된 것부터 돌려준다."""
+    if not config.SESSIONS_DIR.is_dir():
+        return []
+    sessions = [_read_session(p) for p in config.SESSIONS_DIR.glob("*.json")]
+    return sorted((s for s in sessions if s.done), key=lambda s: s.created_at)
+
+
+MAX_COVERED = 40
+
+
+def covered_evidence() -> list[str]:
+    """이전 연습에서 질문의 근거로 쓰인 생기부 기록. 최근 것 위주로 MAX_COVERED개까지."""
+    seen: dict[str, str] = {}
+    for session in finished_sessions():
+        for turn in session.turns:
+            evidence = turn.evidence.strip()
+            if evidence:
+                key = _WHITESPACE.sub("", evidence)
+                seen.pop(key, None)  # 다시 나오면 최근 순서로 옮긴다
+                seen[key] = evidence
+    return list(seen.values())[-MAX_COVERED:]
+
+
+def overall_score(report: dict | None) -> float | None:
+    """평가요소 점수를 학교별 비중으로 가중 평균한 종합 점수."""
+    if not report or not report.get("scores"):
+        return None
+    total = sum(s["weight"] for s in report["scores"])
+    return round(sum(s["score_5"] * s["weight"] for s in report["scores"]) / total, 2)
