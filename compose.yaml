@@ -1,0 +1,31 @@
+services:
+  app:
+    build: .
+    image: mock-interview
+    container_name: mock-interview
+    restart: unless-stopped
+    # data/에 만드는 파일이 호스트 사용자 소유로 남도록 같은 uid로 실행한다.
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    env_file: .env
+    environment:
+      HF_HOME: /cache/huggingface
+      TZ: Asia/Seoul
+    ports:
+      # 이 PC 안에서만 열린다. 밖에서는 Tailscale을 거쳐 들어온다.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+      # Whisper 모델을 호스트 캐시에서 읽어 다시 내려받지 않는다.
+      - ${HOME}/.cache/huggingface:/cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

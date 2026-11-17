@@ -1,0 +1,12 @@
+# 생기부, 녹음, 키는 이미지에 넣지 않는다. 실행할 때 볼륨과 env_file로 넘긴다.
+data/
+.env
+.env*
+!.env.example
+.git/
+.venv/
+tests/
+plan.md
+__pycache__/
+.pytest_cache/
+*.Zone.Identifier
