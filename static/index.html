@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>학종 모의면접</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 설정 화면 -->
+  <main id="screen-setup" class="screen">
+    <header class="page-head">
+      <h1>학종 모의면접</h1>
+      <p class="sub">생기부 기반 확인 면접을 실제 시간에 맞춰 연습합니다.</p>
+    </header>
+
+    <p id="setup-loading" class="muted">설정을 불러오는 중…</p>
+
+    <div id="setup-body" hidden>
+      <section class="panel">
+        <h2>면접 볼 학교</h2>
+        <div id="school-list" class="school-list" role="radiogroup" aria-label="학교 모드"></div>
+        <dl id="school-detail" class="facts"></dl>
+      </section>
+
+      <section class="panel">
+        <h2>생기부</h2>
+        <p id="record-summary" class="muted"></p>
+        <ul id="record-files" class="files"></ul>
+        <p id="mask-warning" class="notice warn" hidden></p>
+      </section>
+
+      <section class="panel">
+        <h2>답변 방식</h2>
+        <div class="mode-list" role="radiogroup" aria-label="답변 방식">
+          <label><input type="radio" name="mode" value="voice" id="mode-voice" checked> 음성으로 답변</label>
+          <label><input type="radio" name="mode" value="text" id="mode-text"> 글로 답변</label>
+        </div>
+        <p id="stt-status" class="muted small"></p>
+        <div id="mic-test" class="mic-test">
+          <button id="mic-test-button" type="button">마이크 테스트 (3초)</button>
+          <span id="mic-test-result" class="muted" role="status"></span>
+        </div>
+        <p id="mode-notice" class="notice warn" hidden></p>
+      </section>
+
+      <section class="panel">
+        <h2>질문 음성</h2>
+        <p id="tts-status" class="muted small"></p>
+        <div class="mic-test">
+          <button id="tts-test-button" type="button">질문 음성 들어 보기</button>
+        </div>
+        <label class="check">
+          <input id="drill-mode" type="checkbox">
+          <span>실전 모드 <span class="muted">질문을 글로 보여주지 않고 음성으로만 들려줍니다.</span></span>
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>답변 제한 시간</h2>
+        <label class="inline-field">
+          <input id="answer-limit" type="number" inputmode="numeric" step="10">
+          <span>초</span>
+        </label>
+        <p class="muted small">시간이 다 되면 그때까지의 답변이 자동으로 제출됩니다.</p>
+      </section>
+
+      <p id="setup-error" class="notice error" role="alert" hidden></p>
+      <button id="start-button" class="primary big" type="button">면접 시작</button>
+      <p class="muted small">시작하면 전체 타이머가 흐르고 중간에 멈출 수 없습니다.</p>
+    </div>
+  </main>
+
+  <!-- 면접 화면 -->
+  <main id="screen-interview" class="screen" hidden>
+    <header class="interview-bar">
+      <div>
+        <div id="interview-school" class="bar-label"></div>
+        <div id="question-count" class="bar-sub"></div>
+      </div>
+      <div class="total-timer" aria-label="남은 면접 시간">
+        <span class="bar-sub">남은 시간</span>
+        <span id="total-timer" class="clock">00:00</span>
+      </div>
+    </header>
+
+    <section class="question-card" aria-live="polite">
+      <div class="interviewers">
+        <span id="badge-A" class="badge">면접위원 A</span>
+        <span id="badge-B" class="badge">면접위원 B</span>
+      </div>
+      <p id="question-text" class="question-text"></p>
+      <p id="phase-note" class="muted"></p>
+    </section>
+
+    <section id="answer-area" class="answer-area">
+      <div class="answer-head">
+        <span>답변</span>
+        <span id="answer-timer" class="clock answer-clock">00:00</span>
+      </div>
+      <div class="meter"><div id="answer-meter" class="meter-fill"></div></div>
+      <div id="voice-input" class="voice-input" hidden>
+        <div class="rec-line"><span id="rec-dot" class="rec-dot"></span><span id="rec-label">대기 중</span></div>
+        <div class="level" aria-hidden="true"><div id="level-fill" class="level-fill"></div></div>
+        <p class="muted small">말이 끝나면 답변 끝내기를 누르세요. 소리 막대가 움직이지 않으면 마이크를 확인하세요.</p>
+      </div>
+      <textarea id="answer-text" rows="7" aria-label="답변" placeholder="실제로 말하듯이 답변을 입력하세요."></textarea>
+      <div class="actions">
+        <span id="submit-hint" class="muted small">Ctrl + Enter로 제출</span>
+        <span class="action-buttons">
+          <button id="replay-button" type="button">질문 다시 듣기 (1회)</button>
+          <button id="submit-button" class="primary" type="button">답변 끝내기</button>
+        </span>
+      </div>
+    </section>
+
+    <div id="interview-error" class="notice error" role="alert" hidden>
+      <span id="interview-error-text"></span>
+      <button id="retry-button" type="button">다시 시도</button>
+    </div>
+  </main>
+
+  <!-- 종료·리포트 화면 -->
+  <main id="screen-done" class="screen" hidden>
+    <header class="page-head">
+      <h1>수고하셨습니다. 면접을 마치겠습니다.</h1>
+      <p id="done-summary" class="sub"></p>
+    </header>
+    <p id="done-error" class="notice error" role="alert" hidden></p>
+
+    <p id="report-status" class="notice info" role="status" hidden></p>
+    <div id="report-error" class="notice error" role="alert" hidden>
+      <span id="report-error-text"></span>
+      <button id="report-retry-button" type="button">다시 시도</button>
+    </div>
+
+    <div id="report" hidden>
+      <section class="panel">
+        <h2>총평</h2>
+        <p id="report-overall"></p>
+      </section>
+      <section class="panel">
+        <h2>평가요소별 점수</h2>
+        <div id="report-scores"></div>
+      </section>
+      <section class="panel">
+        <h2>전달 방식</h2>
+        <p id="report-delivery"></p>
+      </section>
+      <section class="panel">
+        <h2>다음 연습에서 집중할 것</h2>
+        <ol id="report-next" class="next-list"></ol>
+      </section>
+    </div>
+
+    <h2 class="section-title">질문별 기록</h2>
+    <section id="review" class="review"></section>
+    <button id="restart-button" class="primary big" type="button">같은 생기부로 다시 연습</button>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+[project]
+name = "mock-interview"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=2.9.0",
+    "av<17",
+    "fastapi>=0.163.1",
+    "faster-whisper>=1.2.1",
+    "nvidia-cublas-cu12>=12.9.3.13",
+    "nvidia-cudnn-cu12>=9,<10",
+    "pypdf>=7.1.0",
+    "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.34",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
