@@ -1209,6 +1209,58 @@ label.option-row {
   color: var(--error);
 }
 
+/* ---------- 내 모습 보기 ---------- */
+
+.stage {
+  position: relative;
+}
+
+.self-view {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.9rem;
+  width: clamp(6rem, 18vw, 9.5rem);
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 2px solid var(--surface);
+  box-shadow: var(--shadow);
+  background: var(--surface-2);
+  /* 거울처럼 좌우를 뒤집어 보여준다. */
+  transform: scaleX(-1);
+}
+
+/* ---------- 예상 질문 ---------- */
+
+.followups {
+  margin-top: 0.9rem;
+  padding: 0.8rem 1rem;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.followups-title {
+  font-size: 0.8125rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.followups ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.9375rem;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.option-row .segmented {
+  flex-shrink: 0;
+}
+
 /* ---------- 녹음과 말하기 속도 ---------- */
 
 .speech-line {

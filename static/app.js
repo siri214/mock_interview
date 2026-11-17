@@ -24,6 +24,7 @@ const state = {
   audioContext: null,
   analyser: null,
   drill: false, // 실전 모드: 질문을 글로 보여주지 않는다
+  camera: null, // 내 모습 보기용 카메라. 녹화하거나 전송하지 않는다
   replayUsed: false, // 이번 질문에서 다시 듣기를 썼는지
 };
 
@@ -57,12 +58,14 @@ function el(tag, props = {}, ...children) {
 }
 
 const SCREENS = ["setup", "interview", "done"];
+// 예상 질문 화면은 준비 단계에 속한다.
+const EXTRA_SCREENS = { questions: "setup" };
 
 function showScreen(name) {
-  for (const screen of SCREENS) {
+  for (const screen of [...SCREENS, ...Object.keys(EXTRA_SCREENS)]) {
     $(`screen-${screen}`).hidden = screen !== name;
   }
-  const current = SCREENS.indexOf(name);
+  const current = SCREENS.indexOf(EXTRA_SCREENS[name] || name);
   for (const item of $("stepper").children) {
     const index = SCREENS.indexOf(item.dataset.step);
     item.classList.toggle("current", index === current);
@@ -212,6 +215,24 @@ function closeMic() {
   state.recorder = null;
   state.audioContext = null;
   state.analyser = null;
+}
+
+// 내 모습 보기. 화면에 비추기만 한다.
+async function openCamera() {
+  $("camera-notice").hidden = true;
+  try {
+    state.camera = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
+  } catch {
+    $("camera-mode").checked = false;
+    showError("camera-notice", "카메라를 쓸 수 없어 내 모습 보기 없이 진행합니다.");
+  }
+}
+
+function closeCamera() {
+  if (state.camera) state.camera.getTracks().forEach((track) => track.stop());
+  state.camera = null;
+  $("self-view").srcObject = null;
+  $("self-view").hidden = true;
 }
 
 function startRecording(stream) {
@@ -417,16 +438,22 @@ async function startInterview() {
       setMode("text", `${err.message} 이번 면접은 글로 답변합니다.`);
     }
   }
+  if ($("camera-mode").checked) await openCamera();
   button.textContent = "첫 질문을 준비하는 중…";
   try {
     const res = await api("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ school: state.schoolKey, answer_limit_sec: answerLimit }),
+      body: JSON.stringify({
+        school: state.schoolKey,
+        answer_limit_sec: answerLimit,
+        pressure: $("pressure-high").checked ? "high" : "normal",
+      }),
     });
     beginSession(res);
   } catch (err) {
     closeMic();
+    closeCamera();
     showError("setup-error", err.message);
   } finally {
     button.disabled = false;
@@ -455,6 +482,10 @@ function beginSession(res) {
     state.analyser = state.audioContext.createAnalyser();
     state.analyser.fftSize = 1024;
     state.audioContext.createMediaStreamSource(state.stream).connect(state.analyser);
+  }
+  if (state.camera) {
+    $("self-view").srcObject = state.camera;
+    $("self-view").hidden = false;
   }
   showScreen("interview");
 
@@ -608,6 +639,7 @@ async function sendPending() {
 function finishInterview() {
   clearInterval(state.tickId);
   closeMic();
+  closeCamera();
   speak(CLOSING_REMARK, "A");
   showResults(state.sessionId, "수고하셨습니다");
 }
@@ -916,6 +948,65 @@ async function startRetry(turn, card, attempts, button) {
   }, 200);
 }
 
+// ---------- 예상 질문 ----------
+
+async function openPreview(refresh) {
+  const school = state.setup.schools.find((s) => s.key === state.schoolKey);
+  $("preview-title").textContent = `${school.university} 예상 질문`;
+  $("preview-sub").textContent = `${school.track} · ${school.department}`;
+  showError("preview-error", "");
+  $("preview-list").replaceChildren();
+  $("preview-status").hidden = false;
+  $("preview-refresh-button").disabled = true;
+  showScreen("questions");
+  let res;
+  try {
+    res = await api("/api/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ school: school.key, refresh }),
+    });
+  } catch (err) {
+    showError("preview-error", err.message);
+    return;
+  } finally {
+    $("preview-status").hidden = true;
+    $("preview-refresh-button").disabled = false;
+  }
+  const made = new Date(res.created_at).toLocaleString("ko-KR", {
+    month: "long", day: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+  $("preview-sub").textContent =
+    `${school.track} · ${school.department} · 질문 ${res.items.length}개 · ${made}에 뽑음`;
+  $("preview-list").replaceChildren(
+    ...res.items.map((item, i) =>
+      el(
+        "article",
+        { class: "review-card" },
+        el(
+          "div",
+          { class: "review-meta" },
+          el("span", { class: "badge active", text: item.section }),
+          el("span", { class: "tag", text: item.competency }),
+        ),
+        el("h3", { text: `${i + 1}. ${item.question}` }),
+        el(
+          "p",
+          { class: "muted small" },
+          el("strong", { text: "근거 기록 " }),
+          item.evidence + (item.evidence_verified ? "" : " (생기부 원문에서 찾지 못함)"),
+        ),
+        el(
+          "div",
+          { class: "followups" },
+          el("div", { class: "followups-title", text: "이어질 수 있는 꼬리질문" }),
+          el("ul", {}, ...item.followups.map((f) => el("li", { text: f }))),
+        ),
+      ),
+    ),
+  );
+}
+
 // ---------- 연습 기록 ----------
 
 async function loadHistory() {
@@ -946,7 +1037,7 @@ async function loadHistory() {
         el(
           "span",
           { class: "history-main" },
-          el("span", { class: "history-title", text: `${school} · ${when}` }),
+          el("span", { class: "history-title", text: `${school}${item.pressure === "high" ? " (압박)" : ""} · ${when}` }),
           el("span", {
             class: "muted small",
             text:
@@ -977,6 +1068,9 @@ $("submit-button").addEventListener("click", submitAnswer);
 $("retry-button").addEventListener("click", sendPending);
 $("report-retry-button").addEventListener("click", requestReport);
 $("tts-test-button").addEventListener("click", runTtsTest);
+$("preview-button").addEventListener("click", () => openPreview(false));
+$("preview-refresh-button").addEventListener("click", () => openPreview(true));
+$("preview-back-button").addEventListener("click", () => showScreen("setup"));
 $("replay-button").addEventListener("click", replayQuestion);
 $("restart-button").addEventListener("click", () => {
   stopSpeaking();

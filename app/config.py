@@ -15,6 +15,8 @@ RECORDS_DIR = DATA_DIR / "records"
 SESSIONS_DIR = DATA_DIR / "sessions"
 # 답변 녹음. 다시 듣기용으로 이 PC에만 보관한다.
 AUDIO_DIR = DATA_DIR / "audio"
+# 학교별 예상 질문 목록. 한 번 뽑으면 생기부가 바뀔 때까지 다시 쓴다.
+PREVIEWS_DIR = DATA_DIR / "previews"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 TEXT_EXTENSIONS = {".txt", ".md"}

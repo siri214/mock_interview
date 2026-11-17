@@ -147,6 +147,7 @@ class Session:
     report: dict | None = None
     # 이전 연습에서 이미 물어본 생기부 기록. 세션을 만들 때 한 번 정한다.
     covered: list[str] = field(default_factory=list)
+    pressure: str = "normal"  # normal | high
 
     @property
     def last_turn(self) -> Turn | None:

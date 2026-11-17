@@ -45,6 +45,10 @@
         <div class="step-head"><span class="step-num">1</span><h2>면접 볼 학교</h2></div>
         <div id="school-list" class="school-list" role="radiogroup" aria-label="학교 모드"></div>
         <dl id="school-detail" class="facts"></dl>
+        <div class="test-row">
+          <button id="preview-button" type="button">이 학교 예상 질문 보기</button>
+          <span class="muted small">면접 없이 생기부 항목별 질문을 훑어봅니다.</span>
+        </div>
       </section>
 
       <section class="panel">
@@ -99,6 +103,24 @@
           </div>
           <span class="switch"><input id="drill-mode" type="checkbox"><span class="switch-track"></span></span>
         </label>
+        <div class="option-row">
+          <div>
+            <div class="option-title">면접 분위기</div>
+            <p class="muted small">압박을 고르면 꼬리질문이 더 집요해지고 근거와 수치를 요구합니다.</p>
+          </div>
+          <div class="segmented" role="radiogroup" aria-label="면접 분위기">
+            <label><input type="radio" name="pressure" value="normal" id="pressure-normal" checked><span>기본</span></label>
+            <label><input type="radio" name="pressure" value="high" id="pressure-high"><span>압박</span></label>
+          </div>
+        </div>
+        <label class="option-row">
+          <div>
+            <div class="option-title">내 모습 보기</div>
+            <p class="muted small">면접 화면에 카메라 화면을 작게 띄워 자세와 시선을 확인합니다. 녹화하거나 전송하지 않습니다.</p>
+          </div>
+          <span class="switch"><input id="camera-mode" type="checkbox"><span class="switch-track"></span></span>
+        </label>
+        <p id="camera-notice" class="notice warn" hidden></p>
       </section>
 
       <p id="setup-error" class="notice error" role="alert" hidden></p>
@@ -109,6 +131,27 @@
         <h2 class="section-title">연습 기록</h2>
         <ul id="history-list" class="history-list"></ul>
       </section>
+    </div>
+  </main>
+
+  <!-- 예상 질문 화면 -->
+  <main id="screen-questions" class="screen" hidden>
+    <div class="hero">
+      <h1 id="preview-title">예상 질문</h1>
+      <p id="preview-sub" class="sub"></p>
+    </div>
+    <div id="preview-status" class="analyzing" role="status" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <div>
+        <div class="analyzing-title">생기부에서 예상 질문을 뽑는 중입니다</div>
+        <div class="muted small">1분쯤 걸립니다. 한 번 뽑으면 저장해 두고 다시 보여줍니다.</div>
+      </div>
+    </div>
+    <p id="preview-error" class="notice error" role="alert" hidden></p>
+    <section id="preview-list"></section>
+    <div class="preview-actions">
+      <button id="preview-back-button" class="primary" type="button">준비 화면으로</button>
+      <button id="preview-refresh-button" type="button">새로 뽑기</button>
     </div>
   </main>
 
@@ -129,6 +172,7 @@
     </header>
 
     <section class="stage" aria-live="polite">
+      <video id="self-view" class="self-view" autoplay muted playsinline hidden aria-label="내 모습"></video>
       <div class="interviewers">
         <div id="badge-A" class="interviewer">
           <svg viewBox="0 0 120 112" aria-hidden="true">

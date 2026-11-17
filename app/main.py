@@ -1,7 +1,11 @@
+import hashlib
+import json
 import logging
 import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime
+from typing import Literal
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -154,6 +158,12 @@ class SessionCreate(BaseModel):
     answer_limit_sec: int = Field(
         DEFAULT_ANSWER_LIMIT_SEC, ge=ANSWER_LIMIT_MIN_SEC, le=ANSWER_LIMIT_MAX_SEC
     )
+    pressure: Literal["normal", "high"] = "normal"
+
+
+class PreviewRequest(BaseModel):
+    school: str
+    refresh: bool = False
 
 
 def _ask(session: store.Session) -> store.Turn:
@@ -173,6 +183,7 @@ def _ask(session: store.Session) -> store.Turn:
         answer_limit_sec=session.answer_limit_sec,
         is_last=is_last,
         covered=session.covered,
+        pressure=session.pressure,
     )
     return session.add_question(question)
 
@@ -196,6 +207,7 @@ def create_session(body: SessionCreate) -> dict:
         school.key, school.total_limit_sec, body.answer_limit_sec, record.text
     )
     session.covered = store.covered_evidence()
+    session.pressure = body.pressure
     turn = _ask(session)
     store.save_session(session)
     return {
@@ -252,9 +264,37 @@ def create_report(session_id: str) -> dict:
             session.record_text,
             session.turn_dicts(),
             session.answer_limit_sec,
+            session.pressure,
         )
         store.save_session(session)
     return {"report": session.report}
+
+
+@app.post("/api/preview")
+def preview(body: PreviewRequest) -> dict:
+    """면접 없이 훑어볼 예상 질문 목록. 생기부가 그대로면 저장해 둔 목록을 돌려준다."""
+    try:
+        school = get_school(body.school)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    record = store.load_record(interviewer.transcribe_image)
+    record_hash = hashlib.sha256(record.text.encode("utf-8")).hexdigest()
+    path = config.PREVIEWS_DIR / f"{school.key}.json"
+    if not body.refresh and path.is_file():
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        if saved.get("record_hash") == record_hash:
+            return {"items": saved["items"], "created_at": saved["created_at"], "cached": True}
+    items = interviewer.preview_questions(school, record.text)
+    for item in items:
+        item["evidence_verified"] = store.evidence_in_record(item["evidence"], record.text)
+    saved = {
+        "record_hash": record_hash,
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "items": items,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"items": items, "created_at": saved["created_at"], "cached": False}
 
 
 @app.get("/api/sessions")
@@ -268,6 +308,7 @@ def list_sessions() -> dict:
                 "id": session.id,
                 "school": session.school,
                 "created_at": session.created_at,
+                "pressure": session.pressure,
                 "questions": len(session.turns),
                 "elapsed_sec": session.elapsed_sec,
                 "overall": store.overall_score(report),

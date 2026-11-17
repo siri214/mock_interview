@@ -28,10 +28,13 @@ def client(tmp_path, monkeypatch, calls):
     monkeypatch.setattr(config, "RECORDS_DIR", records)
     monkeypatch.setattr(config, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(config, "AUDIO_DIR", tmp_path / "audio")
+    monkeypatch.setattr(config, "PREVIEWS_DIR", tmp_path / "previews")
     monkeypatch.setenv("MASK_NAME", "김하늘")
     monkeypatch.setenv("MASK_SCHOOL", "한빛고등학교")
 
-    def fake_next_question(school, record_text, turns, remaining_sec, answer_limit_sec, is_last, covered):
+    def fake_next_question(
+        school, record_text, turns, remaining_sec, answer_limit_sec, is_last, covered, pressure
+    ):
         calls.append(
             {
                 "record_text": record_text,
@@ -39,6 +42,7 @@ def client(tmp_path, monkeypatch, calls):
                 "remaining_sec": remaining_sec,
                 "is_last": is_last,
                 "covered": covered,
+                "pressure": pressure,
             }
         )
         # 두 번째 질문만 꼬리질문으로 돌려준다.
@@ -466,3 +470,58 @@ def test_retry_rejects_unfinished_session_and_unknown_question(client):
     assert client.post(f"/api/sessions/{sid}/turns/1/retry", data={"answer_sec": 1}).status_code == 409
     done = finish(client, "ajou")
     assert client.post(f"/api/sessions/{done}/turns/9/retry", data={"answer_sec": 1}).status_code == 404
+
+
+def test_pressure_is_stored_and_passed_to_every_question(client, calls):
+    sid = start(client, pressure="high")["session_id"]
+    answer(client, sid, "답변", elapsed_sec=50)
+    assert [c["pressure"] for c in calls] == ["high", "high"]
+    assert store.load_session(sid).pressure == "high"
+    start(client)
+    assert calls[-1]["pressure"] == "normal"
+    assert client.post("/api/sessions", json={"school": "ajou", "pressure": "max"}).status_code == 422
+
+
+def test_high_pressure_prompt_allows_three_followups():
+    from app import prompts
+
+    turns = [
+        {"index": i, "interviewer": "A", "type": "followup" if i > 1 else "new", "competency": "c",
+         "evidence": "e", "text": "q", "answer": "a", "answer_sec": 10}
+        for i in range(1, 4)
+    ]  # 꼬리질문 2번을 이미 한 상태
+    normal = prompts.question_request(turns, 300, 90, 2)
+    high = prompts.question_request(turns, 300, 90, 2, pressure="high")
+    assert "새 주제로 넘어가세요" in normal and "<면접 분위기>" not in normal
+    assert "새 주제로 넘어가세요" not in high and high.startswith("<면접 분위기>")
+    assert "새 주제로 넘어가세요" in prompts.question_request(turns, 300, 90, 3, pressure="high")
+
+
+def test_preview_is_generated_once_per_record(client, monkeypatch):
+    made = []
+
+    def fake_preview(school, record_text):
+        made.append(school.key)
+        return [
+            {"section": "1학년 동아리활동", "evidence": EVIDENCE, "question": "질문", "followups": ["a", "b"],
+             "competency": school.competencies[0].name},
+            {"section": "x", "evidence": "없는 문장", "question": "질문2", "followups": [],
+             "competency": school.competencies[0].name},
+        ]
+
+    monkeypatch.setattr(interviewer, "preview_questions", fake_preview)
+    first = client.post("/api/preview", json={"school": "ajou"}).json()
+    again = client.post("/api/preview", json={"school": "ajou"}).json()
+    assert first["cached"] is False and again["cached"] is True
+    assert again["items"] == first["items"]
+    assert [i["evidence_verified"] for i in first["items"]] == [True, False]
+    assert "record_text" not in json.dumps(first)
+
+    client.post("/api/preview", json={"school": "inha"})  # 학교별로 따로 저장한다
+    client.post("/api/preview", json={"school": "ajou", "refresh": True})
+    assert made == ["ajou", "inha", "ajou"]
+
+    # 생기부가 바뀌면 저장해 둔 목록을 쓰지 않는다.
+    (config.RECORDS_DIR / "extra.txt").write_text("추가 기록", encoding="utf-8")
+    assert client.post("/api/preview", json={"school": "ajou"}).json()["cached"] is False
+    assert client.post("/api/preview", json={"school": "snu"}).status_code == 400

@@ -9,6 +9,23 @@ from app.schools import MAX_QUESTIONS, MIN_QUESTIONS, School
 
 MAX_FOLLOWUPS_PER_TOPIC = 2
 
+HIGH_PRESSURE_FOLLOWUPS = 3
+
+HIGH_PRESSURE_NOTE = f"""\
+<면접 분위기>
+지원자가 압박 면접 연습을 골랐습니다. 실제 면접에서 가장 까다로운 면접위원을 만났을 때를 \
+대비하려는 것입니다. 이번 면접에서는 다음을 따르세요.
+- 추상적이거나 외운 듯한 답변은 넘어가지 말고 반드시 꼬리질문으로 파고듭니다. 한 주제의 \
+꼬리질문은 {HIGH_PRESSURE_FOLLOWUPS}번까지 합니다.
+- 구체적인 수치, 본인이 직접 한 일, 그렇게 판단한 근거를 요구합니다.
+- 답변의 해석에 반론을 제기하거나 다른 가능성을 물어 논리를 확인합니다.
+- "어려우셨나 봅니다"처럼 달래는 말은 하지 않습니다. 답을 못 하면 짧게 다음 질문으로 넘어갑니다.
+- 말투는 끝까지 정중한 존댓말입니다. 무례하거나 비꼬는 표현은 쓰지 않습니다. 압박은 질문의 \
+깊이에서 나옵니다.
+</면접 분위기>
+
+"""
+
 TRANSCRIBE_IMAGE = """\
 이 이미지는 학교생활기록부의 일부(주로 수상경력 표)를 캡처한 것입니다. 모의면접 준비에 쓸 수 \
 있도록 표의 내용을 텍스트로 옮겨 주세요.
@@ -102,7 +119,10 @@ def question_request(
     followup_count: int,
     is_last: bool = False,
     covered: list[str] | None = None,
+    pressure: str = "normal",
 ) -> str:
+    max_followups = HIGH_PRESSURE_FOLLOWUPS if pressure == "high" else MAX_FOLLOWUPS_PER_TOPIC
+    pressure_block = HIGH_PRESSURE_NOTE if pressure == "high" else ""
     covered_block = ""
     if covered:
         items = "\n".join(f"- {c}" for c in covered)
@@ -116,12 +136,12 @@ def question_request(
         )
     if not turns:
         return (
-            f"{covered_block}"
+            f"{pressure_block}{covered_block}"
             f"면접을 시작합니다. 답변 제한 시간은 질문당 {answer_limit_sec}초입니다. "
             "첫 질문(지원 동기)을 만들어 주세요."
         )
     transcript = _transcript(turns)
-    if followup_count >= MAX_FOLLOWUPS_PER_TOPIC:
+    if followup_count >= max_followups:
         followup_note = (
             f"이 주제는 꼬리질문을 이미 {followup_count}번 했습니다. "
             "이번에는 새 주제로 넘어가세요(new)."
@@ -132,7 +152,7 @@ def question_request(
         "\n시간상 이번이 마지막 질문입니다. 마무리 질문을 하세요." if is_last else ""
     )
     return f"""\
-{covered_block}<문답 기록>
+{pressure_block}{covered_block}<문답 기록>
 {transcript}
 </문답 기록>
 
@@ -188,8 +208,16 @@ def _transcript(turns: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def report_request(school: School, turns: list[dict], answer_limit_sec: int) -> str:
+def report_request(
+    school: School, turns: list[dict], answer_limit_sec: int, pressure: str = "normal"
+) -> str:
     competencies = ", ".join(f"{c.name}({c.weight:.0f}%)" for c in school.competencies)
+    pressure_note = (
+        "\n- 이번 면접은 지원자가 고른 압박 면접이었습니다. 꼬리질문이 평소보다 깊었다는 점을 "
+        "감안하되, 점수 기준은 그대로 둡니다."
+        if pressure == "high"
+        else ""
+    )
     return f"""\
 <문답 기록>
 {_transcript(turns)}
@@ -208,7 +236,7 @@ def report_request(school: School, turns: list[dict], answer_limit_sec: int) -> 
 않습니다.
 - 답변 제한은 질문당 {answer_limit_sec}초였습니다. 각 답변의 소요 시간을 보고 너무 짧거나 \
 시간에 쫓겨 끊긴 답변을 delivery에서 짚어 주세요.
-- (무응답)은 답하지 못한 것입니다. 그대로 평가에 반영합니다.
+- (무응답)은 답하지 못한 것입니다. 그대로 평가에 반영합니다.{pressure_note}
 - 음성으로 답한 경우 말하기 속도(무음을 뺀 시간 기준, 분당 음절 수)와 침묵 시간이 함께 \
 적혀 있습니다. 분당 240~390음절이 듣기 편한 대략의 범위입니다. 이 범위를 벗어난 답변이나 \
 침묵이 답변 시간의 3분의 1을 넘는 답변은 delivery에서 몇 번 질문인지와 함께 짚어 주세요. \
@@ -339,3 +367,56 @@ RETRY_SCHEMA = {
     "required": ["progress", "good", "improve", "direction", "mismatch"],
     "additionalProperties": False,
 }
+
+
+PREVIEW_COUNT = 15
+
+
+def preview_request(school: School) -> str:
+    competencies = ", ".join(c.name for c in school.competencies)
+    return f"""\
+지원자가 면접 전에 훑어볼 예상 질문 목록을 만들어 주세요. 모의면접을 하지 않을 때, 생기부의 \
+어느 기록에서 어떤 질문이 나올 수 있는지 미리 보고 답변을 준비하려는 것입니다.
+
+- 이 대학 면접위원이 실제로 물을 법한 질문 {PREVIEW_COUNT}개를 만듭니다. 위에 적힌 이 대학의 \
+질문 성향과 인재상을 따릅니다.
+- 생기부 전체를 고르게 다룹니다. 창의적 체험활동(자율, 동아리, 진로), 여러 과목의 세부능력 및 \
+특기사항, 수상, 독서, 행동특성에서 골고루 뽑고, 한 활동에 질문이 몰리지 않게 합니다. 전공과 \
+직접 이어지는 기록에는 비중을 더 둡니다.
+- section에는 그 기록이 속한 생기부 영역을 "2학년 화학Ⅰ 세특", "2학년 동아리활동"처럼 짧게 씁니다.
+- evidence에는 근거가 된 문장이나 구절을 생기부 원문에서 글자 그대로 복사합니다.
+- question은 면접위원이 말하듯 한 가지만 묻는 짧은 구어체 존댓말로 씁니다.
+- followups에는 그 질문에 답한 뒤 이어질 법한 꼬리질문 2개를 넣습니다. 첫 답변이 두루뭉술할 \
+때 면접위원이 파고들 지점을 고릅니다.
+- competency는 {competencies} 가운데 그 질문이 주로 확인하는 평가요소입니다.
+- 생기부에 나온 순서(학년, 영역)대로 정렬합니다.
+- 모범 답안은 쓰지 않습니다."""
+
+
+def preview_schema(school: School) -> dict:
+    text = {"type": "string"}
+    return {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "section": text,
+                        "evidence": text,
+                        "question": text,
+                        "followups": {"type": "array", "items": text},
+                        "competency": {
+                            "type": "string",
+                            "enum": [c.name for c in school.competencies],
+                        },
+                    },
+                    "required": ["section", "evidence", "question", "followups", "competency"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }

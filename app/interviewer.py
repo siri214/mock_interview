@@ -171,6 +171,7 @@ def next_question(
     answer_limit_sec: int,
     is_last: bool = False,
     covered: list[str] | None = None,
+    pressure: str = "normal",
 ) -> dict:
     """다음 질문 {type, competency, evidence, text, interviewer}를 만든다."""
     response = _create(
@@ -185,7 +186,8 @@ def next_question(
             {
                 "role": "user",
                 "content": prompts.question_request(
-                    turns, remaining_sec, answer_limit_sec, followup_count(turns), is_last, covered
+                    turns, remaining_sec, answer_limit_sec, followup_count(turns),
+                    is_last, covered, pressure,
                 ),
             }
         ],
@@ -232,7 +234,11 @@ def _normalize_report(school: School, raw: dict, turns: list[dict]) -> dict:
 
 
 def generate_report(
-    school: School, record_text: str, turns: list[dict], answer_limit_sec: int
+    school: School,
+    record_text: str,
+    turns: list[dict],
+    answer_limit_sec: int,
+    pressure: str = "normal",
 ) -> dict:
     """면접이 끝난 뒤의 평가 리포트.
 
@@ -250,7 +256,7 @@ def generate_report(
         messages=[
             {
                 "role": "user",
-                "content": prompts.report_request(school, turns, answer_limit_sec),
+                "content": prompts.report_request(school, turns, answer_limit_sec, pressure),
             }
         ],
     )
@@ -294,4 +300,22 @@ def retry_feedback(
     try:
         return json.loads(_text(response))
     except json.JSONDecodeError:
+        raise LLMError("모델 응답을 해석하지 못했습니다. 다시 시도하세요.")
+
+
+def preview_questions(school: School, record_text: str) -> list[dict]:
+    """면접 없이 훑어볼 예상 질문 목록 [{section, evidence, question, followups, competency}]."""
+    response = _create(
+        purpose="preview_questions",
+        max_tokens=16000,
+        system=_system(school, record_text),
+        output_config={
+            "effort": REPORT_EFFORT,
+            "format": {"type": "json_schema", "schema": prompts.preview_schema(school)},
+        },
+        messages=[{"role": "user", "content": prompts.preview_request(school)}],
+    )
+    try:
+        return json.loads(_text(response))["items"]
+    except (json.JSONDecodeError, KeyError):
         raise LLMError("모델 응답을 해석하지 못했습니다. 다시 시도하세요.")
