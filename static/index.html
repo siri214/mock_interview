@@ -4,70 +4,106 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>학종 모의면접</title>
+  <script>
+    // 저장해 둔 테마를 첫 화면이 그려지기 전에 적용해 깜빡임을 막는다.
+    try {
+      const saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
+    } catch {}
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- 설정 화면 -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <span class="brand">학종 모의면접</span>
+      <ol id="stepper" class="stepper" aria-label="진행 단계">
+        <li data-step="setup"><span class="step-dot">1</span>준비</li>
+        <li data-step="interview"><span class="step-dot">2</span>면접</li>
+        <li data-step="done"><span class="step-dot">3</span>리포트</li>
+      </ol>
+      <div class="theme-switch" role="group" aria-label="화면 테마">
+        <button type="button" data-theme-choice="auto">자동</button>
+        <button type="button" data-theme-choice="light">라이트</button>
+        <button type="button" data-theme-choice="dark">다크</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 준비 화면 -->
   <main id="screen-setup" class="screen">
-    <header class="page-head">
-      <h1>학종 모의면접</h1>
-      <p class="sub">생기부 기반 확인 면접을 실제 시간에 맞춰 연습합니다.</p>
-    </header>
+    <div class="hero">
+      <h1>면접 준비</h1>
+      <p class="sub">생기부 기반 확인 면접을 실제 시간에 맞춰 연습합니다. 아래 네 가지를 확인하고 시작하세요.</p>
+    </div>
 
     <p id="setup-loading" class="muted">설정을 불러오는 중…</p>
 
     <div id="setup-body" hidden>
       <section class="panel">
-        <h2>면접 볼 학교</h2>
+        <div class="step-head"><span class="step-num">1</span><h2>면접 볼 학교</h2></div>
         <div id="school-list" class="school-list" role="radiogroup" aria-label="학교 모드"></div>
         <dl id="school-detail" class="facts"></dl>
       </section>
 
       <section class="panel">
-        <h2>생기부</h2>
+        <div class="step-head"><span class="step-num">2</span><h2>생기부 확인</h2></div>
         <p id="record-summary" class="muted"></p>
         <ul id="record-files" class="files"></ul>
         <p id="mask-warning" class="notice warn" hidden></p>
       </section>
 
       <section class="panel">
-        <h2>답변 방식</h2>
-        <div class="mode-list" role="radiogroup" aria-label="답변 방식">
-          <label><input type="radio" name="mode" value="voice" id="mode-voice" checked> 음성으로 답변</label>
-          <label><input type="radio" name="mode" value="text" id="mode-text"> 글로 답변</label>
+        <div class="step-head"><span class="step-num">3</span><h2>기기 점검</h2></div>
+
+        <div class="check-block">
+          <h3>답변 방식</h3>
+          <div class="segmented" role="radiogroup" aria-label="답변 방식">
+            <label><input type="radio" name="mode" value="voice" id="mode-voice" checked><span>음성으로 답변</span></label>
+            <label><input type="radio" name="mode" value="text" id="mode-text"><span>글로 답변</span></label>
+          </div>
+          <div id="mic-test" class="test-row">
+            <button id="mic-test-button" type="button">마이크 테스트 (3초)</button>
+            <span id="mic-test-result" class="muted" role="status"></span>
+          </div>
+          <p id="stt-status" class="muted small"></p>
+          <p id="mode-notice" class="notice warn" hidden></p>
         </div>
-        <p id="stt-status" class="muted small"></p>
-        <div id="mic-test" class="mic-test">
-          <button id="mic-test-button" type="button">마이크 테스트 (3초)</button>
-          <span id="mic-test-result" class="muted" role="status"></span>
+
+        <div class="check-block">
+          <h3>질문 음성</h3>
+          <div class="test-row">
+            <button id="tts-test-button" type="button">질문 음성 들어 보기</button>
+          </div>
+          <p id="tts-status" class="muted small"></p>
         </div>
-        <p id="mode-notice" class="notice warn" hidden></p>
       </section>
 
       <section class="panel">
-        <h2>질문 음성</h2>
-        <p id="tts-status" class="muted small"></p>
-        <div class="mic-test">
-          <button id="tts-test-button" type="button">질문 음성 들어 보기</button>
+        <div class="step-head"><span class="step-num">4</span><h2>면접 방식</h2></div>
+        <div class="option-row">
+          <div>
+            <div class="option-title">답변 제한 시간</div>
+            <p class="muted small">시간이 다 되면 그때까지의 답변이 자동으로 제출됩니다.</p>
+          </div>
+          <label class="inline-field">
+            <input id="answer-limit" type="number" inputmode="numeric" step="10" aria-label="답변 제한 시간(초)">
+            <span>초</span>
+          </label>
         </div>
-        <label class="check">
-          <input id="drill-mode" type="checkbox">
-          <span>실전 모드 <span class="muted">질문을 글로 보여주지 않고 음성으로만 들려줍니다.</span></span>
+        <label class="option-row">
+          <div>
+            <div class="option-title">실전 모드</div>
+            <p class="muted small">질문을 글로 보여주지 않고 음성으로만 들려줍니다.</p>
+          </div>
+          <span class="switch"><input id="drill-mode" type="checkbox"><span class="switch-track"></span></span>
         </label>
-      </section>
-
-      <section class="panel">
-        <h2>답변 제한 시간</h2>
-        <label class="inline-field">
-          <input id="answer-limit" type="number" inputmode="numeric" step="10">
-          <span>초</span>
-        </label>
-        <p class="muted small">시간이 다 되면 그때까지의 답변이 자동으로 제출됩니다.</p>
       </section>
 
       <p id="setup-error" class="notice error" role="alert" hidden></p>
       <button id="start-button" class="primary big" type="button">면접 시작</button>
-      <p class="muted small">시작하면 전체 타이머가 흐르고 중간에 멈출 수 없습니다.</p>
+      <p class="muted small center">시작하면 전체 타이머가 흐르고 중간에 멈출 수 없습니다.</p>
     </div>
   </main>
 
@@ -76,7 +112,10 @@
     <header class="interview-bar">
       <div>
         <div id="interview-school" class="bar-label"></div>
-        <div id="question-count" class="bar-sub"></div>
+        <div class="progress-line">
+          <span id="question-count" class="bar-sub"></span>
+          <span id="question-dots" class="dots" aria-hidden="true"></span>
+        </div>
       </div>
       <div class="total-timer" aria-label="남은 면접 시간">
         <span class="bar-sub">남은 시간</span>
@@ -84,7 +123,7 @@
       </div>
     </header>
 
-    <section class="question-card" aria-live="polite">
+    <section class="stage" aria-live="polite">
       <div class="interviewers">
         <div id="badge-A" class="interviewer">
           <svg viewBox="0 0 120 112" aria-hidden="true">
@@ -105,13 +144,15 @@
         </div>
       </div>
       <div class="desk" aria-hidden="true"></div>
-      <p id="question-text" class="question-text"></p>
-      <p id="phase-note" class="muted"></p>
+      <div class="question-bubble">
+        <p id="question-text" class="question-text"></p>
+        <p id="phase-note" class="muted small"></p>
+      </div>
     </section>
 
-    <section id="answer-area" class="answer-area">
+    <section id="answer-area" class="answer-card">
       <div class="answer-head">
-        <span>답변</span>
+        <span class="answer-title">내 답변</span>
         <span id="answer-timer" class="clock answer-clock">00:00</span>
       </div>
       <div class="meter"><div id="answer-meter" class="meter-fill"></div></div>
@@ -120,7 +161,7 @@
         <div class="level" aria-hidden="true"><div id="level-fill" class="level-fill"></div></div>
         <p class="muted small">말이 끝나면 답변 끝내기를 누르세요. 소리 막대가 움직이지 않으면 마이크를 확인하세요.</p>
       </div>
-      <textarea id="answer-text" rows="7" aria-label="답변" placeholder="실제로 말하듯이 답변을 입력하세요."></textarea>
+      <textarea id="answer-text" rows="6" aria-label="답변" placeholder="실제로 말하듯이 답변을 입력하세요."></textarea>
       <div class="actions">
         <span id="submit-hint" class="muted small">Ctrl + Enter로 제출</span>
         <span class="action-buttons">
@@ -136,36 +177,50 @@
     </div>
   </main>
 
-  <!-- 종료·리포트 화면 -->
+  <!-- 리포트 화면 -->
   <main id="screen-done" class="screen" hidden>
-    <header class="page-head">
-      <h1>수고하셨습니다. 면접을 마치겠습니다.</h1>
+    <div class="hero">
+      <h1>수고하셨습니다</h1>
       <p id="done-summary" class="sub"></p>
-    </header>
+    </div>
     <p id="done-error" class="notice error" role="alert" hidden></p>
 
-    <p id="report-status" class="notice info" role="status" hidden></p>
+    <div id="report-status" class="analyzing" role="status" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <div>
+        <div class="analyzing-title">답변을 분석하는 중입니다</div>
+        <div id="report-status-text" class="muted small"></div>
+      </div>
+    </div>
     <div id="report-error" class="notice error" role="alert" hidden>
       <span id="report-error-text"></span>
       <button id="report-retry-button" type="button">다시 시도</button>
     </div>
 
     <div id="report" hidden>
-      <section class="panel">
-        <h2>총평</h2>
-        <p id="report-overall"></p>
+      <section class="panel summary">
+        <div id="overall-ring" class="ring" role="img">
+          <div class="ring-inner"><span id="overall-score" class="ring-score"></span><span class="ring-max">/ 5</span></div>
+        </div>
+        <div>
+          <h2>종합 평가</h2>
+          <p id="report-overall"></p>
+        </div>
       </section>
+
       <section class="panel">
         <h2>평가요소별 점수</h2>
         <div id="report-scores"></div>
       </section>
+
+      <section class="panel">
+        <h2>다음 연습에서 바꿀 3가지</h2>
+        <ol id="report-next" class="next-list"></ol>
+      </section>
+
       <section class="panel">
         <h2>전달 방식</h2>
         <p id="report-delivery"></p>
-      </section>
-      <section class="panel">
-        <h2>다음 연습에서 집중할 것</h2>
-        <ol id="report-next" class="next-list"></ol>
       </section>
     </div>
 

@@ -56,9 +56,19 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
+const SCREENS = ["setup", "interview", "done"];
+
 function showScreen(name) {
-  for (const screen of ["setup", "interview", "done"]) {
+  for (const screen of SCREENS) {
     $(`screen-${screen}`).hidden = screen !== name;
+  }
+  const current = SCREENS.indexOf(name);
+  for (const item of $("stepper").children) {
+    const index = SCREENS.indexOf(item.dataset.step);
+    item.classList.toggle("current", index === current);
+    item.classList.toggle("passed", index < current);
+    if (index === current) item.setAttribute("aria-current", "step");
+    else item.removeAttribute("aria-current");
   }
   window.scrollTo(0, 0);
 }
@@ -77,6 +87,33 @@ function clock(ms) {
 function duration(sec) {
   const s = Math.round(sec);
   return s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`;
+}
+
+// ---------- 테마 ----------
+
+// auto는 시스템 설정을 따른다. 고른 값은 이 브라우저에만 저장한다.
+function applyTheme(choice) {
+  if (choice === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = choice;
+  for (const button of document.querySelectorAll("[data-theme-choice]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.themeChoice === choice));
+  }
+}
+
+function initTheme() {
+  applyTheme(document.documentElement.dataset.theme || "auto");
+  for (const button of document.querySelectorAll("[data-theme-choice]")) {
+    button.addEventListener("click", () => {
+      const choice = button.dataset.themeChoice;
+      applyTheme(choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("theme");
+        else localStorage.setItem("theme", choice);
+      } catch {
+        // 저장소를 못 쓰는 환경에서는 이번 방문에만 적용된다.
+      }
+    });
+  }
 }
 
 // ---------- 음성 출력 ----------
@@ -476,6 +513,12 @@ async function replayQuestion() {
 async function presentQuestion(question) {
   state.question = question;
   $("question-count").textContent = `질문 ${question.index}`;
+  const maxQuestions = state.setup.max_questions ?? 8;
+  $("question-dots").replaceChildren(
+    ...Array.from({ length: maxQuestions }, (_, i) =>
+      el("i", { class: i + 1 < question.index ? "done" : i + 1 === question.index ? "current" : "" }),
+    ),
+  );
   showQuestionText(question, !(state.drill && tts.available));
   state.replayUsed = false;
   $("replay-button").hidden = !tts.available;
@@ -586,7 +629,7 @@ async function requestReport() {
   const status = $("report-status");
   $("report-error").hidden = true;
   status.hidden = false;
-  status.textContent = "리포트를 작성하는 중입니다. 30초쯤 걸립니다.";
+  $("report-status-text").textContent = "30초쯤 걸립니다. 아래에서 질문별 기록을 먼저 볼 수 있습니다.";
   let report;
   try {
     ({ report } = await api(`/api/sessions/${state.sessionId}/report`, { method: "POST" }));
@@ -603,6 +646,12 @@ async function requestReport() {
 
 function renderReport(report) {
   $("report-overall").textContent = report.overall;
+  // 종합 점수는 평가요소 점수를 학교별 비중으로 가중 평균한 값이다.
+  const weightSum = report.scores.reduce((sum, s) => sum + s.weight, 0);
+  const overall = report.scores.reduce((sum, s) => sum + s.score_5 * s.weight, 0) / weightSum;
+  $("overall-score").textContent = overall.toFixed(1);
+  $("overall-ring").style.setProperty("--p", String((overall / 5) * 100));
+  $("overall-ring").setAttribute("aria-label", `종합 ${overall.toFixed(1)}점, 5점 만점`);
   $("report-delivery").textContent = report.delivery;
   $("report-scores").replaceChildren(
     ...report.scores.map((score) => {
@@ -629,18 +678,17 @@ function renderReport(report) {
 
 function feedbackRows(feedback) {
   const rows = [
-    ["잘한 점", feedback.good, ""],
-    ["보완할 점", feedback.improve, ""],
-    ["다시 답한다면", feedback.direction, ""],
+    ["잘한 점", feedback.good, "good"],
+    ["보완할 점", feedback.improve, "improve"],
+    ["다시 답한다면", feedback.direction, "direction"],
   ];
   if (feedback.mismatch) rows.push(["기록과 어긋난 부분", feedback.mismatch, "mismatch"]);
   return el(
     "dl",
     { class: "feedback" },
-    ...rows.flatMap(([label, text, cls]) => [
-      el("dt", { class: cls, text: label }),
-      el("dd", { class: cls, text }),
-    ]),
+    ...rows.map(([label, text, kind]) =>
+      el("div", { class: `feedback-item ${kind}` }, el("dt", { text: label }), el("dd", { text })),
+    ),
   );
 }
 
@@ -709,5 +757,7 @@ window.addEventListener("beforeunload", (event) => {
 });
 
 if ("speechSynthesis" in window) speechSynthesis.addEventListener("voiceschanged", loadVoices);
+initTheme();
+showScreen("setup");
 loadVoices();
 loadSetup();

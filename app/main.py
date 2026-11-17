@@ -103,6 +103,7 @@ def setup() -> dict:
         "llm_model": config.llm_model(),
         "api_key_set": config.api_key_set(),
         "stt": stt.status(),
+        "max_questions": MAX_QUESTIONS,
         "schools": [s.to_public() for s in SCHOOLS.values()],
         "answer_limit": {
             "default": DEFAULT_ANSWER_LIMIT_SEC,
