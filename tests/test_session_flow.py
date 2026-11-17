@@ -27,6 +27,7 @@ def client(tmp_path, monkeypatch, calls):
     shutil.copy(FIXTURE, records)
     monkeypatch.setattr(config, "RECORDS_DIR", records)
     monkeypatch.setattr(config, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(config, "AUDIO_DIR", tmp_path / "audio")
     monkeypatch.setenv("MASK_NAME", "김하늘")
     monkeypatch.setenv("MASK_SCHOOL", "한빛고등학교")
 
@@ -263,44 +264,99 @@ def test_report_prompt_carries_answers_and_durations(client):
     assert "질문당 90초" in prompt
 
 
-def test_audio_answer_is_transcribed_and_file_removed(client, monkeypatch):
-    seen = []
+SPOKEN = "저는 동아리에서 태양전지 소재를 탐구했습니다"  # 한글 20자
 
-    def fake_transcribe(path):
-        seen.append((path, path.read_bytes()))
-        return " 음성으로 한 답변 "
 
-    monkeypatch.setattr(stt, "transcribe", fake_transcribe)
-    sid = start(client)["session_id"]
-    res = client.post(
+def fake_stt(text=SPOKEN, audio_sec=10.0, speech_sec=7.0):
+    return lambda path: stt.Transcript(text=text, audio_sec=audio_sec, speech_sec=speech_sec)
+
+
+def post_audio(client, sid, content=b"fake-audio", **data):
+    return client.post(
         f"/api/sessions/{sid}/answers",
-        data={"answer_sec": 30, "elapsed_sec": 40},
-        files={"audio": ("answer.webm", b"fake-audio", "audio/webm")},
-    ).json()
-    assert res["transcript"] == "음성으로 한 답변"
-    path, content = seen[0]
-    assert content == b"fake-audio"
-    assert not path.exists()
+        data={"answer_sec": 30, "elapsed_sec": 40, **data},
+        files={"audio": ("answer.webm", content, "audio/webm")},
+    )
+
+
+def test_audio_answer_is_transcribed_kept_and_measured(client, monkeypatch):
+    monkeypatch.setattr(stt, "transcribe", fake_stt(f"  {SPOKEN} "))
+    sid = start(client)["session_id"]
+    assert post_audio(client, sid).json()["transcript"] == SPOKEN
+
+    turn = client.get(f"/api/sessions/{sid}").json()["turns"][0]
+    assert turn["audio"] == "1.webm"
+    assert turn["speech"] == {
+        "audio_sec": 10.0, "speech_sec": 7.0, "silence_sec": 3.0, "syllables": 20, "spm": 171,
+    }
+    res = client.get(f"/api/sessions/{sid}/audio/1.webm")
+    assert res.status_code == 200 and res.content == b"fake-audio"
+    assert res.headers["content-type"] == "audio/webm"
 
 
 def test_audio_file_removed_when_transcription_fails(client, monkeypatch):
-    seen = []
-
     def failing(path):
-        seen.append(path)
         raise stt.STTError("녹음을 읽지 못했습니다.")
 
     monkeypatch.setattr(stt, "transcribe", failing)
     sid = start(client)["session_id"]
-    res = client.post(
-        f"/api/sessions/{sid}/answers",
-        data={"answer_sec": 30, "elapsed_sec": 40},
-        files={"audio": ("answer.webm", b"broken", "audio/webm")},
-    )
+    res = post_audio(client, sid, content=b"broken")
     assert res.status_code == 500 and res.json()["detail"] == "녹음을 읽지 못했습니다."
-    assert not seen[0].exists()
+    assert not (config.AUDIO_DIR / sid / "1.webm").exists()
     # 답변이 저장되지 않았으므로 다시 보낼 수 있다.
     assert client.get(f"/api/sessions/{sid}").json()["turns"][0]["answer"] is None
+
+
+def test_text_answer_has_no_audio_or_speech(client):
+    sid = start(client)["session_id"]
+    answer(client, sid, "글 답변")
+    turn = client.get(f"/api/sessions/{sid}").json()["turns"][0]
+    assert turn["audio"] is None and turn["speech"] is None
+
+
+def test_audio_endpoint_rejects_bad_names(client):
+    sid = start(client)["session_id"]
+    for name in ["2.webm", "..%2F..%2Fsecret.webm", "1.mp3", "x.webm"]:
+        assert client.get(f"/api/sessions/{sid}/audio/{name}").status_code == 404
+    with pytest.raises(store.SessionNotFound):
+        store.audio_path(sid, "../1.webm")
+
+
+def test_speech_stats_skips_short_speech():
+    assert store.speech_stats("네", 3.0, 1.0) is None
+    assert store.speech_stats("", 30.0, 20.0) is None
+    assert store.speech_stats("가나다라마 12 ab!", 20.0, 6.0)["syllables"] == 9
+
+
+def test_report_prompt_includes_speech_rate(client, monkeypatch):
+    monkeypatch.setattr(stt, "transcribe", fake_stt())
+    sid = start(client)["session_id"]
+    post_audio(client, sid, elapsed_sec=570)
+    REPORT_CALLS.clear()
+    client.post(f"/api/sessions/{sid}/report")
+    assert "<답변 소요=30초 말하기속도=분당171음절 침묵=3초>" in REPORT_CALLS[0]["messages"][0]["content"]
+
+
+def test_retry_with_audio_keeps_recording_per_attempt(client, monkeypatch):
+    monkeypatch.setattr(stt, "transcribe", fake_stt())
+    monkeypatch.setattr(
+        interviewer, "retry_feedback",
+        lambda *a: {"progress": "p", "good": "g", "improve": "i", "direction": "d", "mismatch": None},
+    )
+    sid = finish(client, "ajou")
+    url = f"/api/sessions/{sid}/turns/1/retry"
+    for _ in range(2):
+        res = client.post(url, data={"answer_sec": 20}, files={"audio": ("a.webm", b"again", "audio/webm")})
+    assert res.json()["attempt"]["audio"] == "1-r2.webm" and res.json()["attempt"]["speech"]["spm"] == 171
+    assert client.get(f"/api/sessions/{sid}/audio/1-r1.webm").content == b"again"
+
+    def failing(*a):
+        raise interviewer.LLMError("한도", 503)
+
+    monkeypatch.setattr(interviewer, "retry_feedback", failing)
+    res = client.post(url, data={"answer_sec": 20}, files={"audio": ("a.webm", b"again", "audio/webm")})
+    assert res.status_code == 503
+    assert not (config.AUDIO_DIR / sid / "1-r3.webm").exists()
 
 
 def test_empty_audio_is_no_answer(client, monkeypatch):
@@ -315,7 +371,7 @@ def test_empty_audio_is_no_answer(client, monkeypatch):
 
 
 def test_mic_test_endpoint(client, monkeypatch):
-    monkeypatch.setattr(stt, "transcribe", lambda path: "마이크 테스트")
+    monkeypatch.setattr(stt, "transcribe", fake_stt("마이크 테스트"))
     res = client.post("/api/stt/test", files={"audio": ("t.webm", b"x", "audio/webm")}).json()
     assert res["transcript"] == "마이크 테스트"
 

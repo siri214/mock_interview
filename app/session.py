@@ -14,6 +14,10 @@ from app import config
 from app.masking import mask
 
 _SESSION_ID = re.compile(r"^[0-9a-f]{32}$")
+_AUDIO_NAME = re.compile(r"^\d{1,2}(-r\d{1,3})?\.webm$")
+_SPOKEN_CHAR = re.compile(r"[가-힣A-Za-z0-9]")
+# 말한 시간이 이보다 짧으면 속도를 재지 않는다. 몇 마디로는 값이 크게 흔들린다.
+MIN_SPEECH_SEC = 5
 _WHITESPACE = re.compile(r"\s+")
 
 NO_ANSWER = "(무응답)"
@@ -119,8 +123,10 @@ class Turn:
     text: str
     answer: str | None = None
     answer_sec: float | None = None
-    # 리포트를 본 뒤 같은 질문에 다시 답한 기록: {answer, answer_sec, feedback}
+    # 리포트를 본 뒤 같은 질문에 다시 답한 기록: {answer, answer_sec, feedback, audio, speech}
     retries: list[dict] = field(default_factory=list)
+    audio: str | None = None  # 녹음 파일 이름. 글로 답했으면 None
+    speech: dict | None = None  # 말하기 속도. speech_stats() 참고
 
     def to_question(self) -> dict:
         """면접 중에 지원자에게 보여줄 부분."""
@@ -180,6 +186,27 @@ def new_session(school_key: str, total_limit_sec: int, answer_limit_sec: int, re
         answer_limit_sec=answer_limit_sec,
         record_text=record_text,
     )
+
+
+def audio_path(session_id: str, name: str) -> Path:
+    """녹음 파일 경로. 둘 다 경로에 그대로 쓰이므로 형식을 먼저 확인한다."""
+    if not _SESSION_ID.match(session_id) or not _AUDIO_NAME.match(name):
+        raise SessionNotFound(f"{session_id}/{name}")
+    return config.AUDIO_DIR / session_id / name
+
+
+def speech_stats(text: str, audio_sec: float, speech_sec: float) -> dict | None:
+    """말하기 속도(분당 음절 수)와 침묵 시간. 너무 짧은 답변은 None."""
+    syllables = len(_SPOKEN_CHAR.findall(text))
+    if speech_sec < MIN_SPEECH_SEC or not syllables:
+        return None
+    return {
+        "audio_sec": round(audio_sec, 1),
+        "speech_sec": round(speech_sec, 1),
+        "silence_sec": round(max(0.0, audio_sec - speech_sec), 1),
+        "syllables": syllables,
+        "spm": round(syllables / speech_sec * 60),
+    }
 
 
 def _session_path(session_id: str) -> Path:

@@ -168,6 +168,12 @@ def question_schema(school: School) -> dict:
     }
 
 
+def _speech_attrs(speech: dict | None) -> str:
+    if not speech:
+        return ""
+    return f" 말하기속도=분당{speech['spm']}음절 침묵={round(speech['silence_sec'])}초"
+
+
 def _transcript(turns: list[dict]) -> str:
     lines = []
     for t in turns:
@@ -176,7 +182,8 @@ def _transcript(turns: list[dict]) -> str:
             f"[질문 {t['index']}] 면접위원 {t['interviewer']} · {kind} · {t['competency']}\n"
             f"근거 기록: {t['evidence'] or '(특정 기록 없음)'}\n"
             f"질문: {t['text']}\n"
-            f"<답변 소요={round(t['answer_sec'] or 0)}초>\n{t['answer'] or '(무응답)'}\n</답변>"
+            f"<답변 소요={round(t['answer_sec'] or 0)}초{_speech_attrs(t.get('speech'))}>\n"
+            f"{t['answer'] or '(무응답)'}\n</답변>"
         )
     return "\n\n".join(lines)
 
@@ -202,6 +209,10 @@ def report_request(school: School, turns: list[dict], answer_limit_sec: int) -> 
 - 답변 제한은 질문당 {answer_limit_sec}초였습니다. 각 답변의 소요 시간을 보고 너무 짧거나 \
 시간에 쫓겨 끊긴 답변을 delivery에서 짚어 주세요.
 - (무응답)은 답하지 못한 것입니다. 그대로 평가에 반영합니다.
+- 음성으로 답한 경우 말하기 속도(무음을 뺀 시간 기준, 분당 음절 수)와 침묵 시간이 함께 \
+적혀 있습니다. 분당 240~390음절이 듣기 편한 대략의 범위입니다. 이 범위를 벗어난 답변이나 \
+침묵이 답변 시간의 3분의 1을 넘는 답변은 delivery에서 몇 번 질문인지와 함께 짚어 주세요. \
+값이 없는 답변은 글로 입력했거나 너무 짧아 재지 못한 것이니 속도를 언급하지 않습니다.
 
 ## 질문별 피드백 (per_question)
 - 모든 질문에 대해 index 순서로 작성합니다. (무응답)인 질문도 빼지 말고, 어떤 내용으로 답할 수 \

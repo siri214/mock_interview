@@ -1209,6 +1209,34 @@ label.option-row {
   color: var(--error);
 }
 
+/* ---------- 녹음과 말하기 속도 ---------- */
+
+.speech-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  margin: 0 0 0.6rem;
+}
+
+.pace {
+  font-weight: 700;
+}
+
+.pace.ok {
+  color: var(--good);
+}
+
+.pace.off {
+  color: var(--warn);
+}
+
+.answer-audio {
+  display: block;
+  width: 100%;
+  height: 2.5rem;
+  margin: 0 0 0.75rem;
+}
+
 /* ---------- 다시 답하기 ---------- */
 
 .retry-start {

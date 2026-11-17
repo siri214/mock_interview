@@ -4,6 +4,7 @@ import ctypes
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,13 @@ _lock = threading.Lock()
 _model = None
 _device: str | None = None  # 실제로 올라간 장치
 _load_error: str | None = None
+
+
+@dataclass
+class Transcript:
+    text: str
+    audio_sec: float  # 녹음 전체 길이
+    speech_sec: float  # 무음을 뺀, 실제로 말한 시간
 
 
 class STTError(Exception):
@@ -99,8 +107,8 @@ def status() -> dict:
     }
 
 
-def transcribe(path: Path) -> str:
-    """음성 파일을 한국어 텍스트로 옮긴다. 말소리가 없으면 빈 문자열."""
+def transcribe(path: Path) -> Transcript:
+    """음성 파일을 한국어 텍스트로 옮긴다. 말소리가 없으면 text가 빈 문자열."""
     load()
     started = time.monotonic()
     try:
@@ -121,4 +129,9 @@ def transcribe(path: Path) -> str:
         "transcribe device=%s audio=%.1fs took=%.1fs chars=%d",
         _device, info.duration, time.monotonic() - started, len(text),
     )
-    return text
+    speech_sec = getattr(info, "duration_after_vad", None)
+    return Transcript(
+        text=text,
+        audio_sec=float(info.duration),
+        speech_sec=float(info.duration if speech_sec is None else speech_sec),
+    )

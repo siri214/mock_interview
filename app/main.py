@@ -5,7 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -70,26 +70,56 @@ def health() -> dict:
     }
 
 
-def _transcribe_upload(audio: UploadFile) -> str:
-    """녹음을 임시 파일로 받아 전사하고, 성공하든 실패하든 바로 지운다."""
+def _read_upload(audio: UploadFile) -> bytes:
     data = audio.file.read(MAX_AUDIO_BYTES + 1)
     if len(data) > MAX_AUDIO_BYTES:
         raise HTTPException(413, "녹음 파일이 너무 큽니다.")
+    return data
+
+
+def _transcribe_temp(audio: UploadFile) -> str:
+    """마이크 테스트용. 녹음을 임시 파일로 받아 전사하고 바로 지운다."""
+    data = _read_upload(audio)
     if not data:
         return ""
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
         tmp.write(data)
         path = Path(tmp.name)
     try:
-        return stt.transcribe(path)
+        return stt.transcribe(path).text
     finally:
         path.unlink(missing_ok=True)
+
+
+def _take_answer(
+    session_id: str, name: str, audio: UploadFile | None, text: str
+) -> tuple[str, str | None, dict | None]:
+    """답변을 (텍스트, 녹음 파일 이름, 말하기 속도)로 돌려준다.
+
+    녹음은 다시 듣기용으로 data/audio/에 남긴다. 전사에 실패하면 지워서, 답변으로 저장되지
+    않은 녹음이 남지 않게 한다.
+    """
+    if audio is None:
+        return text.strip(), None, None
+    data = _read_upload(audio)
+    if not data:
+        return "", None, None
+    path = store.audio_path(session_id, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    try:
+        result = stt.transcribe(path)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    speech = store.speech_stats(result.text, result.audio_sec, result.speech_sec)
+    return result.text.strip(), name, speech
 
 
 @app.post("/api/stt/test")
 def stt_test(audio: UploadFile = File(...)) -> dict:
     """마이크 테스트: 짧은 녹음을 전사해 돌려준다."""
-    return {"transcript": _transcribe_upload(audio), "device": stt.status()["device"]}
+    return {"transcript": _transcribe_temp(audio), "device": stt.status()["device"]}
 
 
 @app.get("/api/setup")
@@ -192,9 +222,10 @@ def submit_answer(
     # 답변은 질문 생성보다 먼저 저장한다. 질문 생성이 실패해 프론트가 같은 요청을 다시
     # 보내면 저장된 답변을 그대로 두고 질문 생성만 다시 한다.
     if turn.answer is None:
-        if audio is not None:
-            text = _transcribe_upload(audio)
-        turn.answer = text.strip() or store.NO_ANSWER
+        answer, turn.audio, turn.speech = _take_answer(
+            session.id, f"{turn.index}.webm", audio, text
+        )
+        turn.answer = answer or store.NO_ANSWER
         turn.answer_sec = answer_sec
         session.elapsed_sec = max(session.elapsed_sec, elapsed_sec)
         store.save_session(session)
@@ -264,9 +295,9 @@ def retry_answer(
     turn = next((t for t in session.turns if t.index == index), None)
     if turn is None:
         raise HTTPException(404, "질문을 찾을 수 없습니다.")
-    if audio is not None:
-        text = _transcribe_upload(audio)
-    answer = text.strip() or store.NO_ANSWER
+    name = f"{index}-r{len(turn.retries) + 1}.webm"
+    answer, audio_name, speech = _take_answer(session.id, name, audio, text)
+    answer = answer or store.NO_ANSWER
 
     # 직전 시도와 비교한다. 처음 다시 답하는 것이면 면접 때의 답변과 리포트 피드백이 기준이다.
     if turn.retries:
@@ -279,7 +310,27 @@ def retry_answer(
         )
         previous = (turn.answer or store.NO_ANSWER, turn.answer_sec or 0, original)
 
-    feedback = interviewer.retry_feedback(
+    try:
+        feedback = interviewer.retry_feedback(*_retry_args(session, turn, previous, answer, answer_sec))
+    except interviewer.LLMError:
+        # 평가를 못 받은 시도는 기록되지 않으므로 녹음도 남기지 않는다.
+        if audio_name:
+            store.audio_path(session.id, audio_name).unlink(missing_ok=True)
+        raise
+    attempt = {
+        "answer": answer,
+        "answer_sec": answer_sec,
+        "feedback": feedback,
+        "audio": audio_name,
+        "speech": speech,
+    }
+    turn.retries.append(attempt)
+    store.save_session(session)
+    return {"attempt": attempt, "attempts": len(turn.retries)}
+
+
+def _retry_args(session, turn, previous, answer, answer_sec) -> tuple:
+    return (
         get_school(session.school),
         session.record_text,
         asdict(turn),
@@ -290,10 +341,15 @@ def retry_answer(
         answer_sec,
         session.answer_limit_sec,
     )
-    attempt = {"answer": answer, "answer_sec": answer_sec, "feedback": feedback}
-    turn.retries.append(attempt)
-    store.save_session(session)
-    return {"attempt": attempt, "attempts": len(turn.retries)}
+
+
+@app.get("/api/sessions/{session_id}/audio/{name}")
+def get_audio(session_id: str, name: str) -> FileResponse:
+    """보관해 둔 답변 녹음."""
+    path = store.audio_path(session_id, name)
+    if not path.is_file():
+        raise HTTPException(404, "녹음을 찾을 수 없습니다.")
+    return FileResponse(path, media_type="audio/webm")
 
 
 @app.get("/api/sessions/{session_id}")

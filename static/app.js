@@ -729,6 +729,7 @@ function renderReview(session, report) {
         ),
         el("h3", { text: `${turn.index}. ${turn.text}` }),
         el("p", { class: "review-answer", text: turn.answer ?? "(답변 없음)" }),
+        ...speechNodes(session.id, turn),
       );
       if (turn.evidence) {
         card.append(
@@ -756,6 +757,41 @@ function renderReview(session, report) {
   );
 }
 
+// 말하기 속도의 대략적인 기준. 리포트 프롬프트와 같은 값을 쓴다.
+const SPM_SLOW = 240;
+const SPM_FAST = 390;
+
+// 녹음 재생기와 말하기 속도. 글로 답한 경우에는 아무것도 붙지 않는다.
+function speechNodes(sessionId, item) {
+  const nodes = [];
+  if (item.speech) {
+    const { spm, speech_sec: speechSec, silence_sec: silenceSec, audio_sec: audioSec } = item.speech;
+    const pace = spm < SPM_SLOW ? "느린 편" : spm > SPM_FAST ? "빠른 편" : "적당";
+    const line = el(
+      "p",
+      { class: "speech-line small" },
+      el("span", { class: `pace ${spm < SPM_SLOW || spm > SPM_FAST ? "off" : "ok"}`, text: `분당 ${spm}음절 · ${pace}` }),
+      el("span", {
+        class: silenceSec > audioSec / 3 ? "pace off" : "muted",
+        text: `말한 시간 ${duration(speechSec)}, 침묵 ${duration(silenceSec)}`,
+      }),
+    );
+    nodes.push(line);
+  }
+  if (item.audio) {
+    nodes.push(
+      el("audio", {
+        class: "answer-audio",
+        controls: "",
+        preload: "none",
+        src: `/api/sessions/${sessionId}/audio/${item.audio}`,
+        "aria-label": "내 답변 다시 듣기",
+      }),
+    );
+  }
+  return nodes;
+}
+
 // ---------- 같은 질문 다시 답하기 ----------
 
 const retry = { active: null };
@@ -771,6 +807,7 @@ function attemptView(attempt, number) {
       el("span", { class: "muted small", text: `답변 ${duration(attempt.answer_sec)}` }),
     ),
     el("p", { class: "review-answer", text: attempt.answer }),
+    ...speechNodes(state.sessionId, attempt),
     el("p", { class: "progress-note" }, el("strong", { text: "이전 답변과 비교 " }), attempt.feedback.progress),
     feedbackRows(attempt.feedback),
   );

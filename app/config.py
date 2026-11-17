@@ -13,6 +13,8 @@ STATIC_DIR = ROOT / "static"
 DATA_DIR = Path(os.getenv("DATA_DIR") or ROOT / "data")
 RECORDS_DIR = DATA_DIR / "records"
 SESSIONS_DIR = DATA_DIR / "sessions"
+# 답변 녹음. 다시 듣기용으로 이 PC에만 보관한다.
+AUDIO_DIR = DATA_DIR / "audio"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 TEXT_EXTENSIONS = {".txt", ".md"}
